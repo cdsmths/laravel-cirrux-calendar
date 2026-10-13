@@ -111,10 +111,39 @@ it('books a free slot: one fresh list, one create, a row and BookingCreated', fu
     ]);
     Event::assertDispatched(BookingCreating::class, fn (BookingCreating $event): bool => $event->eventType === 'demo'
         && $event->slot->start->toIso8601ZuluString() === BOOK_SLOT_START
-        && $event->notes === 'Bring a laptop');
+        && $event->notes === 'Bring a laptop'
+        && $event->title === 'Demo');
     Event::assertDispatched(BookingCreated::class, fn (BookingCreated $event): bool => $event->booking === $booking);
     Event::assertNotDispatched(BookingRejected::class);
 });
+
+it('gives the event the title of this booking, trimmed', function (): void {
+    Saloon::fake([
+        ListEvents::class => bookSlotList(),
+        CreateEventRequest::class => MockResponse::make(bookSlotPayload('evt-1', BOOK_SLOT_START, '2026-10-30T08:30:00Z'), 201),
+    ]);
+
+    Cirrux::book('demo', bookSlotStart(), bookSlotAttendee(), title: '  Demo Campmaster / La Brouquère ');
+
+    Saloon::assertSent(fn (CreateEventRequest $request): bool => $request->body()->get('title') === 'Demo Campmaster / La Brouquère');
+    Event::assertDispatched(BookingCreating::class, fn (BookingCreating $event): bool => $event->title === 'Demo Campmaster / La Brouquère');
+});
+
+it('falls back to the title of the event type without a usable title', function (?string $title): void {
+    Saloon::fake([
+        ListEvents::class => bookSlotList(),
+        CreateEventRequest::class => MockResponse::make(bookSlotPayload('evt-1', BOOK_SLOT_START, '2026-10-30T08:30:00Z'), 201),
+    ]);
+
+    resolve(BookSlot::class)->handle('demo', bookSlotStart(), bookSlotAttendee(), title: $title);
+
+    Saloon::assertSent(fn (CreateEventRequest $request): bool => $request->body()->get('title') === 'Demo');
+    Event::assertDispatched(BookingCreating::class, fn (BookingCreating $event): bool => $event->title === 'Demo');
+})->with([
+    'null' => [null],
+    'empty' => [''],
+    'whitespace' => ["  \t\n "],
+]);
 
 it('asks Cirrux once for the fresh check, whatever availability read before', function (): void {
     Saloon::fake([

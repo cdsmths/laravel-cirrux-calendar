@@ -198,6 +198,7 @@ $booking = Cirrux::book(
     CarbonImmutable::parse('2026-11-02 09:00', 'Europe/Amsterdam'),
     new Attendee('jane@example.com', 'Jane'),
     'Interested in the API', // optional notes, stored as the description of the event
+    title: 'Demo Campmaster / La Brouquère', // optional; null, empty or whitespace uses the title of the event type
 ); // Booking
 
 Cirrux::cancel($booking);      // or Cirrux::cancel($booking->id)
@@ -209,7 +210,7 @@ Cirrux::cancel($booking);      // or Cirrux::cancel($booking->id)
 2. **Takes the calendar lock** (the one refreshes use) and waits at most `cirrux.lock.timeout` seconds. When it cannot get it, it throws a `SlotUnavailableException` with reason `lock_timeout`.
 3. **Checks the calendar with Cirrux itself**, not the cache, with buffers included. When the time is taken it throws a `SlotUnavailableException` with reason `busy`. This check is what rules out a double booking, whatever the cache holds.
 4. **Dispatches `BookingCreating`.** A listener can hold the booking back by throwing a `BookingVetoedException`; nothing has been created at that point.
-5. **Creates the event** in Cirrux, with the attendee, and Cirrux mails the attendee an invitation.
+5. **Creates the event** in Cirrux, with the attendee, and Cirrux mails the attendee an invitation. The event gets the `title` you passed (trimmed), or the `title` of the event type when you passed none.
 6. **Stores the booking** in `cirrux_bookings`, releases the lock and dispatches `BookingCreated`.
 
 If storing the booking fails (the database is down, say), the event is deleted from the calendar again and the original exception is thrown; a failure of that delete is reported with `report()` and does not hide the original one. If Cirrux creates the event but the answer never reaches you (a timeout), there is an event without a booking in Cirrux: the next refresh shows that time as busy.
@@ -265,7 +266,7 @@ The package dispatches its own events, so you can build on top of it without cha
 | `CalendarRefreshFailed` | The refresh failed; the previous cache normally stays in place, unless it was forgotten first (e.g. after deleting a recurring event), in which case reads stay fail closed | `calendarUuid`, `CirruxFailure` |
 | `CalendarStale` | Availability returned no slots because the cache cannot vouch for the requested window (see Availability); at most once per `max_staleness` per calendar | `calendarUuid`, `refreshedAt` (`null` when there is no usable refresh metadata) |
 | `RateLimited` | Cirrux answered `429` or the local limiter refused a request | `retryAfter` |
-| `BookingCreating` | A slot is valid and free and nothing has been written yet; throw a `BookingVetoedException` from a listener to refuse the booking | `eventType`, `Slot`, `Attendee`, `notes` |
+| `BookingCreating` | A slot is valid and free and nothing has been written yet; throw a `BookingVetoedException` from a listener to refuse the booking | `eventType`, `Slot`, `Attendee`, `notes`, `title` |
 | `BookingCreated` | A booking was stored (after the database commit) | `Booking` |
 | `BookingRejected` | `book()` refused a booking | `eventType`, `start`, `Attendee`, `reason`: a `SlotRejection` value, `busy`, `lock_timeout` or `vetoed` |
 | `BookingCancelled` | A booking was cancelled, by `cancel()` or by reconciliation (after the database commit) | `Booking`, `CancelledBy` (`user` or `external`) |

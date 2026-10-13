@@ -95,15 +95,17 @@ final readonly class Cirrux
      * Books one slot of a configured event type: the start is validated, the calendar is checked
      * against Cirrux itself, the event is created (Cirrux mails the attendee) and the booking is stored.
      *
+     * `$title` names this event in the calendar; null, empty or only whitespace uses the title of the event type.
+     *
      * @throws InvalidConfigurationException for an unknown event type, an invalid one or one without a calendar
      * @throws InvalidSlotException when the start is not a valid slot start of the event type
      * @throws SlotUnavailableException when the calendar is busy at that time, or could not be locked in time
      * @throws BookingVetoedException when a listener of BookingCreating holds the booking back
      * @throws CirruxException when Cirrux refuses or cannot be reached
      */
-    public function book(string $eventType, CarbonInterface $start, Attendee $attendee, ?string $notes = null): Booking
+    public function book(string $eventType, CarbonInterface $start, Attendee $attendee, ?string $notes = null, ?string $title = null): Booking
     {
-        return $this->bookSlot->handle($eventType, $start, $attendee, $notes);
+        return $this->bookSlot->handle($eventType, $start, $attendee, $notes, $title);
     }
 
     /**

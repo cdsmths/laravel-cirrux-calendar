@@ -68,6 +68,9 @@ final readonly class BookSlot
      * Every refusal dispatches `BookingRejected`, after the lock is released. `BookingCreated` is
      * dispatched last, and only when the row is stored.
      *
+     * @param  string|null  $title  the title of this event in the calendar; null, empty or only
+     *                              whitespace falls back to the title of the event type
+     *
      * @throws InvalidConfigurationException for an unknown or invalid event type, or one without a calendar
      * @throws InvalidSlotException when the start is not a valid slot start of the event type
      * @throws SlotUnavailableException when the calendar is busy at that time, or could not be locked in time
@@ -75,9 +78,10 @@ final readonly class BookSlot
      * @throws CirruxRequestException when Cirrux refuses or cannot be reached
      * @throws RateLimitedException when the rate limit is reached
      */
-    public function handle(string $eventType, CarbonInterface $start, Attendee $attendee, ?string $notes = null): Booking
+    public function handle(string $eventType, CarbonInterface $start, Attendee $attendee, ?string $notes = null, ?string $title = null): Booking
     {
         $type = $this->eventType($eventType);
+        $title = $this->title($type, $title);
         $calendar = (string) $type->calendar;
         $start = CarbonImmutable::instance($start)->utc();
 
@@ -95,8 +99,8 @@ final readonly class BookSlot
             /** @var Booking $booking */
             $booking = $this->locks
                 ->lock('cirrux:lock:'.$calendar, self::LOCK_SECONDS)
-                ->block(Config::integer('cirrux.lock.timeout'), function () use ($type, $calendar, $start, $attendee, $notes, &$refresh): Booking {
-                    return $this->book($type, $calendar, $start, $attendee, $notes, $refresh);
+                ->block(Config::integer('cirrux.lock.timeout'), function () use ($type, $calendar, $start, $attendee, $notes, $title, &$refresh): Booking {
+                    return $this->book($type, $calendar, $start, $attendee, $notes, $title, $refresh);
                 });
         } catch (LockTimeoutException) {
             event(new BookingRejected($eventType, $start, $attendee, SlotUnavailableException::LOCK_TIMEOUT));
@@ -124,7 +128,7 @@ final readonly class BookSlot
     /**
      * Everything that must happen with the calendar locked.
      */
-    private function book(EventType $type, string $calendar, CarbonImmutable $start, Attendee $attendee, ?string $notes, bool &$refresh): Booking
+    private function book(EventType $type, string $calendar, CarbonImmutable $start, Attendee $attendee, ?string $notes, string $title, bool &$refresh): Booking
     {
         $end = $start->addMinutes($type->duration);
 
@@ -133,10 +137,10 @@ final readonly class BookSlot
 
         throw_unless($this->calculator->isFree($type, $start, $events, CarbonImmutable::now('UTC')), SlotUnavailableException::busy());
 
-        event(new BookingCreating($type->name, new Slot($start, $end), $attendee, $notes));
+        event(new BookingCreating($type->name, new Slot($start, $end), $attendee, $notes, $title));
 
         $created = $this->createEvent->handle($calendar, new NewEvent(
-            title: $type->title,
+            title: $title,
             start: $start,
             end: $end,
             timezone: $type->timezone,
@@ -197,6 +201,16 @@ final readonly class BookSlot
             // A failing reconciliation or listener must not hide the exception that started the undo.
             report($throwable);
         }
+    }
+
+    /**
+     * The title for this booking's event, trimmed; without one, the title of the event type.
+     */
+    private function title(EventType $type, ?string $title): string
+    {
+        $title = trim($title ?? '');
+
+        return $title === '' ? $type->title : $title;
     }
 
     /**

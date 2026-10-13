@@ -172,7 +172,7 @@ it('dispatches and serializes the booking events', function (): void {
     $slot = new Slot($booking->start, $booking->end);
 
     $events = [
-        new BookingCreating('demo', $slot, $attendee, 'Hi'),
+        new BookingCreating('demo', $slot, $attendee, 'Hi', 'Demo'),
         new BookingCreated($booking),
         new BookingRejected('demo', $booking->start, $attendee, 'busy'),
         new BookingCancelled($booking, CancelledBy::External),
@@ -195,7 +195,7 @@ it('dispatches only the committed booking events after commit', function (): voi
     expect(new BookingCreated(eventsTestBooking()))->toBeInstanceOf(ShouldDispatchAfterCommit::class)
         ->and(new BookingCancelled(eventsTestBooking(), CancelledBy::User))->toBeInstanceOf(ShouldDispatchAfterCommit::class)
         ->and(new BookingRescheduled(eventsTestBooking(), CarbonImmutable::now(), CarbonImmutable::now()))->toBeInstanceOf(ShouldDispatchAfterCommit::class)
-        ->and(new BookingCreating('demo', new Slot(CarbonImmutable::now(), CarbonImmutable::now()), new Attendee('a@b.nl'), null))->not->toBeInstanceOf(ShouldDispatchAfterCommit::class)
+        ->and(new BookingCreating('demo', new Slot(CarbonImmutable::now(), CarbonImmutable::now()), new Attendee('a@b.nl'), null, 'Demo'))->not->toBeInstanceOf(ShouldDispatchAfterCommit::class)
         ->and(new BookingRejected('demo', CarbonImmutable::now(), new Attendee('a@b.nl'), 'vetoed'))->not->toBeInstanceOf(ShouldDispatchAfterCommit::class);
 });
 

@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the Cirrux calendar endpoints are undocumented, releases stay on 0.x and a minor release may contain breaking changes.
 
+## [0.1.2] - 2026-10-14
+
+### Added
+
+- An optional `title` for a single booking: `Cirrux::book('demo', $start, $attendee, $notes, title: 'Demo Campmaster / La Brouquère')`. Null, an empty string or only whitespace falls back to the `title` of the event type; the title is trimmed.
+
+### Changed
+
+- `BookingCreating` carries the resolved `title` as a new last constructor argument and property.
+
 ## [0.1.1] - 2026-10-14
 
 ### Added

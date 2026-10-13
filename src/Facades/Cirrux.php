@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static Collection<int, Calendar> calendars()
  * @method static CalendarResource calendar(string $uuid)
  * @method static Availability availability(string $eventType)
- * @method static Booking book(string $eventType, CarbonInterface $start, Attendee $attendee, ?string $notes = null)
+ * @method static Booking book(string $eventType, CarbonInterface $start, Attendee $attendee, ?string $notes = null, ?string $title = null)
  * @method static void cancel(Booking|string $booking)
  * @method static void refresh(?string $calendarUuid = null)
  * @method static void forget(?string $calendarUuid = null)
