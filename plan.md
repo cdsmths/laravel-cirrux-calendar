@@ -315,7 +315,7 @@ De verbinding met Cirrux bouwen we met [Saloon](https://docs.saloon.dev) v4 (`sa
 
 | Package | Gebruik |
 | --- | --- |
-| `saloonphp/laravel-plugin` ^5 | Laravel-integratie, `MockClient`/`Saloon::fake()` in Pest-tests. Vereist `illuminate/* ^12.39 \|\| ^13.0` |
+| `saloonphp/laravel-plugin` ^5 | Laravel-integratie, `MockClient`/`Saloon::fake()` in Pest-tests. Vereist Laravel 13 |
 | `saloonphp/rate-limit-plugin` ^2.5 | `HasRateLimits` op de connector met `LaravelCacheStore`, `Limit::allow(60)->everyMinute()`; `429` → `Retry-After` respecteren |
 | `saloonphp/pagination-plugin` ^2.3 | `CursorPaginator` voor de eventlijst (`has_more`, `next_cursor`) |
 
@@ -458,10 +458,10 @@ We volgen de code-patronen en tooling van Nuno Maduro, zoals in [`nunomaduro/lar
 
 ### Ondersteuning en CI
 
-- **Ondersteuning:** PHP 8.3, 8.4 en 8.5+ (`"php": "^8.3"`), Laravel 12 en 13 (`^12.39 || ^13.0`, vanwege de laravel-plugin). Testen via Orchestra Testbench 10/11. De starter kit vraagt PHP 8.5, maar voor een package houden we het bereik breed.
+- **Ondersteuning:** PHP 8.3, 8.4 en 8.5+ (`"php": "^8.3"`) en alleen Laravel 13 (`^13.0`). Testen via Orchestra Testbench 11. De starter kit vraagt PHP 8.5, maar voor een package houden we het bereik breed.
 - **CI (GitHub Actions):**
   - `test:lint`, `test:types` en `test:type-coverage` als aparte jobs op PHP 8.5.
-  - `test:unit` als matrix over PHP 8.3/8.4/8.5 × Laravel 12/13 met prefer-stable, plus prefer-lowest alleen op PHP 8.3.
+  - `test:unit` als matrix over PHP 8.3/8.4/8.5 met prefer-stable, plus prefer-lowest alleen op PHP 8.3.
   - Een wekelijkse workflow (`schedule`) die `test:contract` draait tegen de test-agenda, met secrets; mislukt die, dan is de API veranderd.
 
 ## Fasering
