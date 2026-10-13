@@ -1,0 +1,13 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+    - vendor/nesbot/carbon/extension.neon
+
+parameters:
+    level: max
+    paths:
+        - src
+        - config
+    tmpDir: tmp/phpstan
+    treatPhpDocTypesAsCertain: false
+
+    # bleedingEdge is included via the larastan extension; enable it explicitly too.
