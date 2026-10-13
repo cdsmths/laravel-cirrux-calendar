@@ -8,6 +8,7 @@ use Codesmiths\CirruxCalendar\Actions\Auth\RefreshAccessToken;
 use Codesmiths\CirruxCalendar\Auth\DatabaseTokenStore;
 use Codesmiths\CirruxCalendar\Auth\TokenStore;
 use Codesmiths\CirruxCalendar\Calendars\CalendarList;
+use Codesmiths\CirruxCalendar\Commands\LoginCommand;
 use Codesmiths\CirruxCalendar\Http\CirruxConnector;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\LockProvider;
@@ -26,7 +27,10 @@ final class CirruxCalendarServiceProvider extends PackageServiceProvider
         $package
             ->name('cirrux')
             ->hasConfigFile('cirrux')
-            ->hasMigration('create_cirrux_tokens_table');
+            ->hasMigration('create_cirrux_tokens_table')
+            ->hasCommands([
+                LoginCommand::class,
+            ]);
     }
 
     public function packageRegistered(): void
