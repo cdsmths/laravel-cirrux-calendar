@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Codesmiths\CirruxCalendar\Events;
 
-use Codesmiths\CirruxCalendar\Exceptions\CirruxAuthException;
+use Codesmiths\CirruxCalendar\Data\CirruxFailure;
 use Illuminate\Foundation\Events\Dispatchable;
 
 /**
@@ -14,5 +14,5 @@ final readonly class TokenRefreshFailed
 {
     use Dispatchable;
 
-    public function __construct(public CirruxAuthException $exception) {}
+    public function __construct(public CirruxFailure $failure) {}
 }

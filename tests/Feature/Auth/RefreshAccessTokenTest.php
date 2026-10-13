@@ -144,7 +144,10 @@ it('fails definitively when Cirrux rejects the refresh token', function (int $st
 
     expect(resolve(TokenStore::class)->get()?->refreshToken)->toBe('old-refresh');
     Event::assertDispatchedTimes(TokenRefreshFailed::class, 1);
-    Event::assertDispatched(TokenRefreshFailed::class, fn (TokenRefreshFailed $event): bool => $event->exception->getMessage() === sprintf('Cirrux rejected the refresh token (HTTP %d).', $status));
+    Event::assertDispatched(TokenRefreshFailed::class, fn (TokenRefreshFailed $event): bool => $event->failure->message === sprintf('Cirrux rejected the refresh token (HTTP %d).', $status)
+        && $event->failure->exception === CirruxAuthException::class
+        && $event->failure->status === 0
+        && $event->failure->retryAfter === null);
     Event::assertNotDispatched(TokenRefreshed::class);
 })->with([400, 401, 422]);
 

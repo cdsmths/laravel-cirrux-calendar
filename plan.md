@@ -197,7 +197,7 @@ Het package dispatcht bij elke betekenisvolle stap een eigen Laravel-event, zoda
 | Event | Wanneer | Payload |
 | --- | --- | --- |
 | `CalendarRefreshed` | `RefreshCalendar` geslaagd | `calendarUuid`, `from`, `to`, aantal events, aantal API-calls |
-| `CalendarRefreshFailed` | refresh mislukt; de oude cache blijft staan | `calendarUuid`, `CirruxException` |
+| `CalendarRefreshFailed` | refresh mislukt; de oude cache blijft staan | `calendarUuid`, `CirruxFailure` |
 | `CalendarStale` | `refreshed_at` ouder dan `max_staleness`; er worden geen slots getoond | `calendarUuid`, `refreshedAt` |
 | `RateLimited` | `429` van Cirrux of de lokale limiter | `retryAfter` |
 
@@ -210,14 +210,14 @@ Het package dispatcht bij elke betekenisvolle stap een eigen Laravel-event, zoda
 | `LoggedIn` | `CompleteDeviceLogin` geslaagd | `expiresAt` |
 | `LoggedOut` | `Logout` | — |
 | `TokenRefreshed` | `RefreshAccessToken` geslaagd | `expiresAt` |
-| `TokenRefreshFailed` | refresh definitief mislukt; iemand moet `cirrux:login` draaien | `CirruxAuthException` |
+| `TokenRefreshFailed` | refresh definitief mislukt; iemand moet `cirrux:login` draaien | `CirruxFailure` |
 
 Tokens zitten nooit in een payload.
 
 Conventies:
 
 - Alle events staan in `src/Events/`, zijn `final readonly` en gebruiken `Dispatchable`.
-- De payload bestaat uit DTO's en scalars, geen Eloquent-models of connectors. Zo zijn ze veilig te serialiseren voor queued listeners.
+- De payload bestaat uit DTO's en scalars, geen Eloquent-models, connectors of exceptions. Zo zijn ze veilig te serialiseren voor queued listeners. Een mislukking gaat mee als `CirruxFailure` (exception-class, message, status, `retryAfter`): een gegooide exception heeft closures in de stacktrace en is niet te serialiseren.
 - Alleen Actions dispatchen events. Facade, commands en de HTTP-laag doen dat nooit zelf.
 - Events die volgen op een database-write (`BookingCreated`, `BookingCancelled`, `BookingRescheduled`) implementeren `ShouldDispatchAfterCommit`. Listeners zien dus nooit een boeking die daarna wordt teruggedraaid.
 - De events zijn publieke API: de payload hernoemen of weghalen is een breaking change en komt in de changelog. De README krijgt een tabel met alle events.
@@ -228,9 +228,9 @@ Conventies:
 2. **Scheduled job** (`Cirrux::refresh()`, standaard elke 5 min) haalt de komende N weken (default 4) op in één call (plus paginering). ≈ 12 calls per uur, onafhankelijk van bezoekersaantallen.
    - Neemt de agenda-lock, zodat refresh en boeken elkaar niet overschrijven.
    - Haalt eerst **alle pagina's** op en schrijft pas daarna alle buckets in één `putMany`. Mislukt het halverwege (429/5xx), dan blijft de oude cache onaangeroerd.
-   - Zet na succes `cirrux:refreshed_at:{calendar}`.
+   - Schrijft in dezelfde `putMany` de metadata `cirrux:refreshed:{calendar}`: `refreshed_at` plus het gedekte venster (`from`, `to`). Lezen geeft alleen data binnen dat venster; zo telt een achtergebleven bucket van een oudere refresh niet mee.
 3. **Gewone `Cache::put`/`get` met een lange TTL** (default 24 uur, "last known good"); geen `Cache::flexible()`. Bij flexible zou een bezoekersrequest de refresh triggeren, en het eigen opslagformaat van flexible botst met write-through.
-4. **Fail closed:** ontbreekt een bucket, of is `refreshed_at` ouder dan `max_staleness` (default 2 uur), dan levert `slots()` niets op en dispatcht het package `CalendarStale`. "Geen data" is iets anders dan "geen events".
+4. **Fail closed:** ontbreekt een bucket, valt het venster buiten het laatst gerefreshte venster, of is `refreshed_at` ouder dan `max_staleness` (default 2 uur), dan levert `slots()` niets op en dispatcht het package `CalendarStale`. "Geen data" is iets anders dan "geen events".
 5. **Write-through:** create en delete via het package werken het bestaande bucket bij door één event toe te voegen of te verwijderen (merge), niet door het bucket te vervangen. Raakt een wijziging een herhalende serie, dan worden alle buckets van die agenda vergeten en volgt direct `refresh($calendar)`.
 6. **Verse check bij boeken:** de enige ongecachte read, zie [Boeken](#boeken).
 7. **Agendalijst:** 24 uur, via `Cache::remember`.

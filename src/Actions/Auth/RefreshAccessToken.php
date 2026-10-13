@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Codesmiths\CirruxCalendar\Actions\Auth;
 
 use Codesmiths\CirruxCalendar\Auth\TokenStore;
+use Codesmiths\CirruxCalendar\Data\CirruxFailure;
 use Codesmiths\CirruxCalendar\Data\Tokens;
 use Codesmiths\CirruxCalendar\Events\TokenRefreshed;
 use Codesmiths\CirruxCalendar\Events\TokenRefreshFailed;
@@ -65,7 +66,7 @@ final readonly class RefreshAccessToken
         } catch (LockTimeoutException $exception) {
             throw new CirruxRequestException('Timed out waiting for another process to refresh the Cirrux token.', 0, $exception);
         } catch (CirruxAuthException $exception) {
-            event(new TokenRefreshFailed($exception));
+            event(new TokenRefreshFailed(CirruxFailure::from($exception)));
 
             throw $exception;
         }
