@@ -38,18 +38,42 @@ use Illuminate\Support\Facades\Config;
  */
 final readonly class EventCache
 {
+    /**
+     * How far before now a refresh starts: a day of lookback for all-day events and a day of buffer.
+     */
+    private const int MARGIN_HOURS = 48;
+
     public function __construct(private Repository $cache) {}
 
     /**
-     * The window a refresh covers: the current ISO week up to `weeks_ahead` weeks later.
+     * The window a refresh covers: from two days ago up to `weeks_ahead` weeks from now.
+     *
+     * The window moves with the clock instead of snapping to the ISO week, because the events that
+     * availability reads reach past the slots (SlotCalculator::eventsWindow(): a day plus
+     * `buffer_before` before, a day plus `duration` and `buffer_after` after). The provider keeps
+     * `buffer_before`, `duration + buffer_after` and `max_staleness` at one day or less, so a read
+     * made up to `max_staleness` after a refresh starts no earlier than 48 hours before that refresh
+     * and ends at most `(weeks_ahead - 1) * 7 + 3` days after it: up to one day of staleness, the
+     * horizon (`max_days_ahead` is limited to `(weeks_ahead - 1) * 7`) and two days of margin. Both
+     * lie inside the window, with four days to spare, so a fresh refresh always covers the read.
+     * The buckets stay per ISO week; the first and last week are only partly covered, and
+     * the window in the metadata decides what may be read.
      *
      * @return array{CarbonImmutable, CarbonImmutable}
      */
     public function refreshWindow(): array
     {
-        $from = $this->weekStart(CarbonImmutable::now('UTC'));
+        $now = CarbonImmutable::now('UTC');
 
-        return [$from, $from->addWeeks(Config::integer('cirrux.cache.weeks_ahead'))];
+        return [$now->subHours(self::MARGIN_HOURS), $now->addWeeks(Config::integer('cirrux.cache.weeks_ahead'))];
+    }
+
+    /**
+     * When the last refresh of this calendar wrote its weeks, or null when the metadata is missing or damaged.
+     */
+    public function refreshedAt(string $calendar): ?CarbonImmutable
+    {
+        return $this->coverage($calendar)['refreshedAt'] ?? null;
     }
 
     /**

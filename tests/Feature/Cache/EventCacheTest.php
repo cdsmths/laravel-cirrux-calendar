@@ -280,13 +280,27 @@ it('forgets a calendar through the action', function (): void {
     expect($cache->read('cal-1', CarbonImmutable::parse('2026-10-26T00:00:00Z'), CarbonImmutable::parse('2026-11-09T00:00:00Z')))->toBeNull();
 });
 
-it('refreshes a window of weeks_ahead weeks from the start of this ISO week', function (): void {
+it('refreshes a window from 48 hours ago up to weeks_ahead weeks from now', function (): void {
     config()->set('cirrux.cache.weeks_ahead', 3);
 
     [$from, $to] = resolve(EventCache::class)->refreshWindow();
 
-    expect($from->toIso8601ZuluString())->toBe('2026-10-26T00:00:00Z')
-        ->and($to->toIso8601ZuluString())->toBe('2026-11-16T00:00:00Z');
+    expect($from->toIso8601ZuluString())->toBe('2026-10-26T12:00:00Z')
+        ->and($to->toIso8601ZuluString())->toBe('2026-11-18T12:00:00Z');
+});
+
+it('tells when the calendar was refreshed, or null without usable metadata', function (): void {
+    $cache = resolve(EventCache::class);
+
+    expect($cache->refreshedAt('cal-1'))->toBeNull();
+
+    fillWeeks();
+
+    expect($cache->refreshedAt('cal-1')?->toIso8601ZuluString())->toBe('2026-10-28T12:00:00Z');
+
+    Cache::put('cirrux:refreshed:cal-1', 'damaged');
+
+    expect($cache->refreshedAt('cal-1'))->toBeNull();
 });
 
 it('uses the cache store from the config', function (): void {

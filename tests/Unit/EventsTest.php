@@ -11,6 +11,7 @@ use Codesmiths\CirruxCalendar\Events\CalendarEventCreated;
 use Codesmiths\CirruxCalendar\Events\CalendarEventDeleted;
 use Codesmiths\CirruxCalendar\Events\CalendarRefreshed;
 use Codesmiths\CirruxCalendar\Events\CalendarRefreshFailed;
+use Codesmiths\CirruxCalendar\Events\CalendarStale;
 use Codesmiths\CirruxCalendar\Events\LoggedIn;
 use Codesmiths\CirruxCalendar\Events\LoggedOut;
 use Codesmiths\CirruxCalendar\Events\RateLimited;
@@ -118,6 +119,24 @@ it('serializes the cache event payloads for queued listeners', function (): void
         ->and($tokenFailed->failure)->toEqual(new CirruxFailure(CirruxAuthException::class, 'Cirrux rejected the refresh token (HTTP 401).', 0))
         ->and($limited)->toBeInstanceOf(RateLimited::class)
         ->and($limited->retryAfter)->toBe(42);
+});
+
+it('dispatches and serializes CalendarStale, with or without a refresh time', function (): void {
+    $refreshedAt = CarbonImmutable::parse('2026-10-28T10:00:00Z');
+
+    Event::fake();
+    event(new CalendarStale('cal-1', $refreshedAt));
+    Event::assertDispatched(CalendarStale::class, fn (CalendarStale $event): bool => $event->calendarUuid === 'cal-1' && $event->refreshedAt === $refreshedAt);
+
+    $stale = unserialize(serialize(new CalendarStale('cal-1', $refreshedAt)));
+    $never = unserialize(serialize(new CalendarStale('cal-2', null)));
+
+    expect($stale)->toBeInstanceOf(CalendarStale::class)
+        ->and($stale->calendarUuid)->toBe('cal-1')
+        ->and($stale->refreshedAt?->equalTo($refreshedAt))->toBeTrue()
+        ->and($never)->toBeInstanceOf(CalendarStale::class)
+        ->and($never->calendarUuid)->toBe('cal-2')
+        ->and($never->refreshedAt)->toBeNull();
 });
 
 it('serializes the calendar event payloads for queued listeners', function (): void {

@@ -31,7 +31,7 @@ return [
             'buffer_after' => 10,
             'slot_interval' => 30,
             'min_notice' => 60 * 24,          // minuten
-            'max_days_ahead' => 21,           // moet <= weeks_ahead * 7
+            'max_days_ahead' => 21,           // moet <= (weeks_ahead - 1) * 7
             'timezone' => 'Europe/Amsterdam',
             // Eerste use case: demo's alleen op maandag en vrijdag.
             // Dagen die ontbreken zijn niet boekbaar.

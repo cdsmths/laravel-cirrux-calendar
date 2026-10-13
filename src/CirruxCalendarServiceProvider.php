@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Codesmiths\CirruxCalendar;
 
 use Codesmiths\CirruxCalendar\Actions\Auth\RefreshAccessToken;
+use Codesmiths\CirruxCalendar\Actions\Availability\ReportStaleCalendar;
 use Codesmiths\CirruxCalendar\Actions\Cache\RefreshCalendar;
 use Codesmiths\CirruxCalendar\Auth\DatabaseTokenStore;
 use Codesmiths\CirruxCalendar\Auth\TokenStore;
@@ -14,9 +15,9 @@ use Codesmiths\CirruxCalendar\Commands\CalendarsCommand;
 use Codesmiths\CirruxCalendar\Commands\LoginCommand;
 use Codesmiths\CirruxCalendar\Commands\LogoutCommand;
 use Codesmiths\CirruxCalendar\Commands\RefreshCommand;
+use Codesmiths\CirruxCalendar\Data\EventType;
 use Codesmiths\CirruxCalendar\Exceptions\InvalidConfigurationException;
 use Codesmiths\CirruxCalendar\Http\CirruxConnector;
-use DateTimeZone;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
@@ -29,6 +30,10 @@ use Spatie\LaravelPackageTools\PackageServiceProvider;
 
 final class CirruxCalendarServiceProvider extends PackageServiceProvider
 {
+    private const int ONE_DAY_SECONDS = 86400;
+
+    private const int ONE_DAY_MINUTES = 1440;
+
     public function configurePackage(Package $package): void
     {
         $package
@@ -60,6 +65,10 @@ final class CirruxCalendarServiceProvider extends PackageServiceProvider
             ->needs(CacheRepository::class)
             ->give(fn (): CacheRepository => $this->cache());
 
+        $this->app->when(ReportStaleCalendar::class)
+            ->needs(CacheRepository::class)
+            ->give(fn (): CacheRepository => $this->cache());
+
         $this->app->when(CalendarList::class)
             ->needs(CacheRepository::class)
             ->give(fn (): CacheRepository => $this->cache());
@@ -79,6 +88,11 @@ final class CirruxCalendarServiceProvider extends PackageServiceProvider
     {
         $weeksAhead = $this->integerAtLeast('cirrux.cache.weeks_ahead', 1);
         $maxStaleness = $this->integerAtLeast('cirrux.cache.max_staleness', 1);
+
+        if ($maxStaleness > self::ONE_DAY_SECONDS) {
+            throw InvalidConfigurationException::forKey('cirrux.cache.max_staleness', 'must be an integer of at most 86400 (one day)');
+        }
+
         $this->integerAtLeast('cirrux.cache.ttl', $maxStaleness, 'cirrux.cache.max_staleness');
         $this->integerAtLeast('cirrux.cache.calendars_ttl', 1);
         $this->integerAtLeast('cirrux.lock.timeout', 0);
@@ -93,7 +107,7 @@ final class CirruxCalendarServiceProvider extends PackageServiceProvider
         }
 
         foreach ($eventTypes as $name => $eventType) {
-            $this->validateEventType('cirrux.event_types.'.$name, $eventType, $weeksAhead);
+            $this->validateEventType((string) $name, $eventType, $weeksAhead);
         }
     }
 
@@ -126,65 +140,28 @@ final class CirruxCalendarServiceProvider extends PackageServiceProvider
         }
     }
 
-    private function validateEventType(string $key, mixed $eventType, int $weeksAhead): void
+    private function validateEventType(string $name, mixed $eventType, int $weeksAhead): void
     {
+        $key = 'cirrux.event_types.'.$name;
+
         if (! is_array($eventType)) {
             throw InvalidConfigurationException::forKey($key, 'must be an array');
         }
 
-        $timezone = $eventType['timezone'] ?? null;
+        $type = EventType::fromConfig($name, $eventType);
 
-        if (! is_string($timezone) || ! in_array($timezone, DateTimeZone::listIdentifiers(), true)) {
-            throw InvalidConfigurationException::forKey($key.'.timezone', 'must be a valid time zone identifier');
+        // These limits keep every availability read inside the window of a refresh (see EventCache::refreshWindow()).
+        if ($type->maxDaysAhead > ($weeksAhead - 1) * 7) {
+            throw InvalidConfigurationException::forKey($key.'.max_days_ahead', 'must be an integer of at most (cirrux.cache.weeks_ahead - 1) * 7');
         }
 
-        $maxDaysAhead = $eventType['max_days_ahead'] ?? null;
-
-        if (! is_int($maxDaysAhead) || $maxDaysAhead > $weeksAhead * 7) {
-            throw InvalidConfigurationException::forKey($key.'.max_days_ahead', 'must be an integer of at most cirrux.cache.weeks_ahead * 7');
+        if ($type->bufferBefore > self::ONE_DAY_MINUTES) {
+            throw InvalidConfigurationException::forKey($key.'.buffer_before', 'must be an integer of at most 1440 (one day)');
         }
 
-        $this->validateHours($key.'.hours', $eventType['hours'] ?? null);
-    }
-
-    private function validateHours(string $key, mixed $hours): void
-    {
-        if (! is_array($hours)) {
-            throw InvalidConfigurationException::forKey($key, 'must be an array');
+        if ($type->duration + $type->bufferAfter > self::ONE_DAY_MINUTES) {
+            throw InvalidConfigurationException::forKey($key.'.duration', 'plus buffer_after must be at most 1440 minutes (one day)');
         }
-
-        foreach ($hours as $day => $periods) {
-            if (! in_array($day, ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'], true)) {
-                throw InvalidConfigurationException::forKey($key, sprintf('has the day "%s", expected mon, tue, wed, thu, fri, sat or sun', $day));
-            }
-
-            if (! is_array($periods) || ! array_is_list($periods)) {
-                throw InvalidConfigurationException::forKey($key.'.'.$day, 'must be a list of ["HH:MM", "HH:MM"] periods');
-            }
-
-            foreach ($periods as $period) {
-                if (! $this->isValidPeriod($period)) {
-                    throw InvalidConfigurationException::forKey($key.'.'.$day, 'must only hold ["HH:MM", "HH:MM"] periods that end after they start');
-                }
-            }
-        }
-    }
-
-    private function isValidPeriod(mixed $period): bool
-    {
-        if (! is_array($period) || ! array_is_list($period) || count($period) !== 2) {
-            return false;
-        }
-
-        [$start, $end] = $period;
-
-        // Both are zero padded, so comparing the strings compares the times.
-        return $this->isClockTime($start) && $this->isClockTime($end) && $start < $end;
-    }
-
-    private function isClockTime(mixed $time): bool
-    {
-        return is_string($time) && preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $time) === 1;
     }
 
     private function cache(): CacheRepository

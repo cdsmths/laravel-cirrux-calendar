@@ -5,13 +5,18 @@ declare(strict_types=1);
 namespace Codesmiths\CirruxCalendar;
 
 use Closure;
+use Codesmiths\CirruxCalendar\Actions\Availability\ReportStaleCalendar;
 use Codesmiths\CirruxCalendar\Actions\Cache\ForgetCalendar;
 use Codesmiths\CirruxCalendar\Actions\Cache\RefreshCalendar;
+use Codesmiths\CirruxCalendar\Availability\Availability;
+use Codesmiths\CirruxCalendar\Availability\SlotCalculator;
 use Codesmiths\CirruxCalendar\Calendars\CalendarList;
 use Codesmiths\CirruxCalendar\Calendars\CalendarResource;
 use Codesmiths\CirruxCalendar\Calendars\ConfiguredCalendars;
 use Codesmiths\CirruxCalendar\Data\Calendar;
+use Codesmiths\CirruxCalendar\Data\EventType;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxException;
+use Codesmiths\CirruxCalendar\Exceptions\InvalidConfigurationException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\Collection;
 
@@ -44,6 +49,35 @@ final readonly class Cirrux
     public function calendar(string $uuid): CalendarResource
     {
         return new CalendarResource($uuid, $this->container);
+    }
+
+    /**
+     * The free slots of one configured event type:
+     * `Cirrux::availability('demo')->between($from, $to)->inTimezone($tz)->slots()`.
+     *
+     * @throws InvalidConfigurationException for an unknown event type, an invalid one or one without a calendar
+     */
+    public function availability(string $eventType): Availability
+    {
+        $key = 'cirrux.event_types.'.$eventType;
+        $config = config($key);
+
+        if (! is_array($config)) {
+            throw InvalidConfigurationException::forKey($key, 'must be an array');
+        }
+
+        $type = EventType::fromConfig($eventType, $config);
+
+        if ($type->calendar === null || $type->calendar === '') {
+            throw InvalidConfigurationException::forKey($key.'.calendar', 'must be the uuid of a calendar');
+        }
+
+        return new Availability(
+            $type,
+            $this->calendar($type->calendar),
+            $this->container->make(SlotCalculator::class),
+            $this->container->make(ReportStaleCalendar::class),
+        );
     }
 
     /**

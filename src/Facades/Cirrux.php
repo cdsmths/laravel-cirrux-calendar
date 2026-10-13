@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Codesmiths\CirruxCalendar\Facades;
 
+use Codesmiths\CirruxCalendar\Availability\Availability;
 use Codesmiths\CirruxCalendar\Calendars\CalendarResource;
 use Codesmiths\CirruxCalendar\Cirrux as CirruxManager;
 use Codesmiths\CirruxCalendar\Data\Calendar;
@@ -13,6 +14,7 @@ use Illuminate\Support\Facades\Facade;
 /**
  * @method static Collection<int, Calendar> calendars()
  * @method static CalendarResource calendar(string $uuid)
+ * @method static Availability availability(string $eventType)
  * @method static void refresh(?string $calendarUuid = null)
  * @method static void forget(?string $calendarUuid = null)
  *

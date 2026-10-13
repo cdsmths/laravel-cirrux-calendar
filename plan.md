@@ -126,6 +126,8 @@ Cirrux::availability('demo')->isFree(CarbonInterface $start): bool
 
 Slotberekening is een **pure functie** (`SlotCalculator`) over werktijden, regels en een lijst events, zonder cache of HTTP. `slots()`, `isFree()` en `book()` gebruiken allemaal diezelfde functie.
 
+**All-day events** blokkeren de hele lokale kalenderdag in de tijdzone van het event type. **Slots rond een zomer- of wintertijdwissel** waarvan start of eind niet of dubbel bestaat als wandkloktijd, vervallen: `NewEvent` kan ze niet eenduidig versturen.
+
 **Buffers** gelden rond álle bezette (opaque) events in de agenda, niet alleen rond eigen boekingen: een slot is vrij als `[start − buffer_before, end + buffer_after]` niet overlapt met een opaque event.
 
 Consequentie bij de demo-config (duur 30, buffers 10/10, interval 30): na een boeking om 10:00 is 11:00 het eerstvolgende vrije slot, want 10:30 botst met de buffers. Wil je wel elk half uur een demo kunnen geven, zet dan de buffers op 0 of het interval op 40.
@@ -198,7 +200,7 @@ Het package dispatcht bij elke betekenisvolle stap een eigen Laravel-event, zoda
 | --- | --- | --- |
 | `CalendarRefreshed` | `RefreshCalendar` geslaagd | `calendarUuid`, `from`, `to`, aantal events, aantal API-calls |
 | `CalendarRefreshFailed` | refresh mislukt; de oude cache blijft staan | `calendarUuid`, `CirruxFailure` |
-| `CalendarStale` | `refreshed_at` ouder dan `max_staleness`; er worden geen slots getoond | `calendarUuid`, `refreshedAt` |
+| `CalendarStale` | de cache kan niet instaan voor het gevraagde venster (metadata ontbreekt of is beschadigd, ouder dan `max_staleness`, venster buiten de dekking, of een weekbucket ontbreekt); er worden geen slots getoond | `calendarUuid`, `refreshedAt` (null zonder bruikbare metadata) |
 | `RateLimited` | `429` van Cirrux of de lokale limiter | `retryAfter` |
 
 `CalendarStale` wordt hooguit één keer per `max_staleness`-periode per agenda gedispatcht (cache-flag), zodat een drukke boekingspagina geen alert-storm geeft.
@@ -225,7 +227,7 @@ Conventies:
 ## Caching
 
 1. **Events per agenda per ISO-week (UTC)** in de cache, key `cirrux:events:{calendar}:{yyyy}-W{ww}`. Een event komt in elke week die het overlapt, dus ook meerdaagse events en events over een weekgrens. Lezen pakt alle buckets die het venster raken, ontdubbelt op id en filtert op overlap.
-2. **Scheduled job** (`Cirrux::refresh()`, standaard elke 5 min) haalt de komende N weken (default 4) op in één call (plus paginering). ≈ 12 calls per uur, onafhankelijk van bezoekersaantallen.
+2. **Scheduled job** (`Cirrux::refresh()`, standaard elke 5 min) haalt het venster `[nu − 48 uur, nu + N weken)` op (default N = 4) in één call (plus paginering). Het venster schuift met de klok mee in plaats van op de ISO-week te beginnen: `slots()` leest events tot een dag plus de buffers vóór en ná de slots, en dat moet ook op maandag binnen de dekking vallen. ≈ 12 calls per uur, onafhankelijk van bezoekersaantallen.
    - Neemt de agenda-lock, zodat refresh en boeken elkaar niet overschrijven.
    - Haalt eerst **alle pagina's** op en schrijft pas daarna alle buckets in één `putMany`. Mislukt het halverwege (429/5xx), dan blijft de oude cache onaangeroerd.
    - Schrijft in dezelfde `putMany` de metadata `cirrux:refreshed:{calendar}`: `refreshed_at` plus het gedekte venster (`from`, `to`). Lezen geeft alleen data binnen dat venster; zo telt een achtergebleven bucket van een oudere refresh niet mee.
@@ -280,7 +282,7 @@ return [
             'buffer_after' => 10,
             'slot_interval' => 30,
             'min_notice' => 60 * 24,          // minuten
-            'max_days_ahead' => 21,           // moet <= weeks_ahead * 7
+            'max_days_ahead' => 21,           // moet <= (weeks_ahead - 1) * 7
             'timezone' => 'Europe/Amsterdam',
             // Eerste use case: demo's alleen op maandag en vrijdag.
             // Dagen die ontbreken zijn niet boekbaar.
@@ -293,7 +295,7 @@ return [
 ];
 ```
 
-De service provider valideert de config bij het booten: `max_days_ahead <= weeks_ahead * 7`, geldige tijdzone en werktijden, en een lock-capable cache-store.
+De service provider valideert de config bij het booten: `max_days_ahead <= (weeks_ahead - 1) * 7`, geldige tijdzone en werktijden, en een lock-capable cache-store. Daarnaast: `buffer_before <= 1440`, `duration + buffer_after <= 1440` (minuten) en `max_staleness <= 86400`. Samen garanderen die regels dat het venster dat `slots()` ophaalt, tot `max_staleness` na een refresh binnen de gedekte periode valt.
 
 ## Tijdzones
 

@@ -66,18 +66,63 @@ it('rejects an unknown time zone', function (mixed $timezone): void {
 })->with(['unknown' => 'Mars/Olympus', 'null' => null, 'int' => 1]);
 
 it('rejects max_days_ahead beyond the cached weeks', function (mixed $days): void {
-    config()->set('cirrux.cache.weeks_ahead', 2);
+    config()->set('cirrux.cache.weeks_ahead', 3);
     config()->set('cirrux.event_types.demo.max_days_ahead', $days);
 
     expectInvalidCirruxConfig('"cirrux.event_types.demo.max_days_ahead"');
-})->with(['too far' => 15, 'string' => '7', 'missing' => null]);
+})->with(['one day too far' => (3 - 1) * 7 + 1, 'weeks_ahead times seven' => 21, 'string' => '7', 'missing' => null]);
 
-it('accepts max_days_ahead of exactly weeks_ahead times seven', function (): void {
-    config()->set('cirrux.cache.weeks_ahead', 2);
+it('names the rule when max_days_ahead is too far', function (): void {
+    config()->set('cirrux.cache.weeks_ahead', 3);
+    config()->set('cirrux.event_types.demo.max_days_ahead', 15);
+
+    expectInvalidCirruxConfig('must be an integer of at most (cirrux.cache.weeks_ahead - 1) * 7');
+});
+
+it('accepts max_days_ahead of exactly weeks_ahead minus one times seven', function (): void {
+    config()->set('cirrux.cache.weeks_ahead', 3);
     config()->set('cirrux.event_types.demo.max_days_ahead', 14);
 
     bootCirruxProvider();
 })->throwsNoExceptions();
+
+it('rejects a buffer or duration of more than a day, and accepts exactly a day', function (string $field, int $value, int $buffer, bool $valid): void {
+    config()->set('cirrux.event_types.demo.'.$field, $value);
+    config()->set('cirrux.event_types.demo.buffer_after', $buffer);
+
+    if ($valid) {
+        bootCirruxProvider();
+
+        expect(config('cirrux.event_types.demo.'.$field))->toBe($value);
+
+        return;
+    }
+
+    expectInvalidCirruxConfig('"cirrux.event_types.demo.'.$field.'"');
+})->with([
+    'buffer_before at a day' => ['buffer_before', 1440, 10, true],
+    'buffer_before over a day' => ['buffer_before', 1441, 10, false],
+    'duration plus buffer_after at a day' => ['duration', 1430, 10, true],
+    'duration plus buffer_after over a day' => ['duration', 1431, 10, false],
+    'buffer_after pushes it over a day' => ['duration', 30, 1411, false],
+    'buffer_after at a day with duration' => ['duration', 30, 1410, true],
+]);
+
+it('accepts a max_staleness of exactly a day and rejects more', function (): void {
+    config()->set('cirrux.cache.max_staleness', 86400);
+
+    bootCirruxProvider();
+
+    config()->set('cirrux.cache.max_staleness', 86401);
+
+    expectInvalidCirruxConfig('"cirrux.cache.max_staleness" must be an integer of at most 86400');
+});
+
+it('rejects every max_days_ahead when weeks_ahead is one', function (): void {
+    config()->set('cirrux.cache.weeks_ahead', 1);
+
+    expectInvalidCirruxConfig('"cirrux.event_types.demo.max_days_ahead"');
+});
 
 it('rejects invalid working hours', function (mixed $hours, string $message): void {
     config()->set('cirrux.event_types.demo.hours', $hours);

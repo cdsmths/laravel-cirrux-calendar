@@ -180,7 +180,8 @@ it('forgets and refreshes the calendar when a series is deleted', function (Cale
 
     resolve(DeleteEvent::class)->handle('cal-1', $eventId);
 
-    $events = resolve(EventCache::class)->read('cal-1', CarbonImmutable::parse('2026-10-26T00:00:00Z'), CarbonImmutable::parse('2026-11-09T00:00:00Z'));
+    // The refresh after the delete covers [now - 48h, now + 4 weeks).
+    $events = resolve(EventCache::class)->read('cal-1', CarbonImmutable::parse('2026-10-26T12:00:00Z'), CarbonImmutable::parse('2026-11-09T00:00:00Z'));
 
     expect($events?->pluck('id')->all())->toBe(['other']);
     Saloon::assertSent(ListEvents::class);

@@ -20,7 +20,7 @@ use Saloon\Http\Faking\MockResponse;
 use Saloon\Http\Response;
 use Saloon\Laravel\Facades\Saloon;
 
-// 2026-10-28 is a Wednesday; the refresh window is [2026-10-26, 2026-11-23) with the default 4 weeks.
+// 2026-10-28 12:00 is a Wednesday; the refresh window is [2026-10-26 12:00, 2026-11-25 12:00): two days back, the default 4 weeks ahead.
 beforeEach(function (): void {
     $this->travelTo(CarbonImmutable::parse('2026-10-28T12:00:00Z'));
     resolve(TokenStore::class)->put(new Tokens('access', 'refresh', CarbonImmutable::now('UTC')->addHour()));
@@ -43,8 +43,8 @@ function oldCache(): void
 {
     resolve(EventCache::class)->replace(
         'cal-1',
-        CarbonImmutable::parse('2026-10-26T00:00:00Z'),
-        CarbonImmutable::parse('2026-11-23T00:00:00Z'),
+        CarbonImmutable::parse('2026-10-26T12:00:00Z'),
+        CarbonImmutable::parse('2026-11-25T12:00:00Z'),
         collect([CalendarEvent::fromApi(cirruxEventPayload('old', '2026-10-28T10:00:00Z', '2026-10-28T11:00:00Z'))]),
         CarbonImmutable::now('UTC'),
     );
@@ -57,6 +57,7 @@ function cacheSnapshot(): array
         'cirrux:events:cal-1:2026-W45',
         'cirrux:events:cal-1:2026-W46',
         'cirrux:events:cal-1:2026-W47',
+        'cirrux:events:cal-1:2026-W48',
         'cirrux:refreshed:cal-1',
     ]);
 }
@@ -71,30 +72,31 @@ it('fetches every page, then replaces the weeks in one go and announces it', fun
         ]]),
         MockResponse::make(['has_more' => false, 'data' => [
             cirruxEventPayload('crossing', '2026-11-01T23:00:00Z', '2026-11-02T01:00:00Z'),
-            cirruxEventPayload('runs-into', '2026-10-25T23:00:00Z', '2026-10-26T01:00:00Z'),
-            cirruxEventPayload('starts-at-to', '2026-11-23T00:00:00Z', '2026-11-23T01:00:00Z'),
+            cirruxEventPayload('runs-into', '2026-10-26T11:00:00Z', '2026-10-26T13:00:00Z'),
+            cirruxEventPayload('starts-at-to', '2026-11-25T12:00:00Z', '2026-11-25T13:00:00Z'),
         ]]),
     ]);
 
     resolve(RefreshCalendar::class)->handle('cal-1');
 
-    $events = resolve(EventCache::class)->read('cal-1', CarbonImmutable::parse('2026-10-26T00:00:00Z'), CarbonImmutable::parse('2026-11-23T00:00:00Z'));
+    $events = resolve(EventCache::class)->read('cal-1', CarbonImmutable::parse('2026-10-26T12:00:00Z'), CarbonImmutable::parse('2026-11-25T12:00:00Z'));
 
     expect($events?->pluck('id')->all())->toBe(['runs-into', 'a', 'crossing'])
         ->and(Cache::get('cirrux:events:cal-1:2026-W46'))->toBe([])
         ->and(Cache::get('cirrux:events:cal-1:2026-W47'))->toBe([])
-        ->and(Cache::get('cirrux:events:cal-1:2026-W48'))->toBeNull()
+        ->and(Cache::get('cirrux:events:cal-1:2026-W48'))->toBe([])
+        ->and(Cache::get('cirrux:events:cal-1:2026-W49'))->toBeNull()
         ->and(Cache::get('cirrux:refreshed:cal-1'))->toBe([
             'refreshed_at' => '2026-10-28T12:00:00+00:00',
-            'from' => '2026-10-26T00:00:00+00:00',
-            'to' => '2026-11-23T00:00:00+00:00',
+            'from' => '2026-10-26T12:00:00+00:00',
+            'to' => '2026-11-25T12:00:00+00:00',
         ]);
 
     Saloon::assertSentCount(2);
     Event::assertDispatchedTimes(CalendarRefreshed::class, 1);
     Event::assertDispatched(CalendarRefreshed::class, fn (CalendarRefreshed $event): bool => $event->calendarUuid === 'cal-1'
-        && $event->from->toIso8601ZuluString() === '2026-10-26T00:00:00Z'
-        && $event->to->toIso8601ZuluString() === '2026-11-23T00:00:00Z'
+        && $event->from->toIso8601ZuluString() === '2026-10-26T12:00:00Z'
+        && $event->to->toIso8601ZuluString() === '2026-11-25T12:00:00Z'
         && $event->eventCount === 3
         && $event->apiCalls === 2);
     Event::assertNotDispatched(CalendarRefreshFailed::class);
@@ -103,8 +105,8 @@ it('fetches every page, then replaces the weeks in one go and announces it', fun
     $query = array_map(static fn (Response $response): array => $response->getPendingRequest()->query()->all(), Saloon::mockClient()->getRecordedResponses());
 
     expect($query[0])->toBe([
-        'time_min' => '2026-10-25T00:00:00Z',
-        'time_max' => '2026-11-23T00:00:00Z',
+        'time_min' => '2026-10-25T12:00:00Z',
+        'time_max' => '2026-11-25T12:00:00Z',
         'timezone' => 'UTC',
     ])->and($query[1]['cursor'])->toBe('c1');
 });
@@ -114,7 +116,7 @@ it('stores a calendar without events as empty weeks', function (): void {
 
     resolve(RefreshCalendar::class)->handle('cal-1');
 
-    $events = resolve(EventCache::class)->read('cal-1', CarbonImmutable::parse('2026-10-26T00:00:00Z'), CarbonImmutable::parse('2026-11-23T00:00:00Z'));
+    $events = resolve(EventCache::class)->read('cal-1', CarbonImmutable::parse('2026-10-26T12:00:00Z'), CarbonImmutable::parse('2026-11-25T12:00:00Z'));
 
     expect($events?->all())->toBe([]);
 });
