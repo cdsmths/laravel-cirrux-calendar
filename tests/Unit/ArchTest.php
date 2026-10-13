@@ -3,10 +3,13 @@
 declare(strict_types=1);
 
 use Codesmiths\CirruxCalendar\Exceptions\CirruxException;
+use Codesmiths\CirruxCalendar\Http\CirruxAuthConnector;
+use Codesmiths\CirruxCalendar\Http\CirruxConnector;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Saloon\Http\Connector;
 
 arch()->preset()->php();
 
@@ -71,9 +74,15 @@ arch('only actions dispatch events')
     ->expect('Codesmiths\CirruxCalendar\Events')
     ->toOnlyBeUsedIn('Codesmiths\CirruxCalendar\Actions');
 
-arch('the http layer and facades do not touch the database, the cache or the event dispatcher')
-    ->expect([
-        'Codesmiths\CirruxCalendar\Http',
-        'Codesmiths\CirruxCalendar\Facades',
-    ])
-    ->not->toUse([DB::class, Cache::class, Event::class]);
+// Pest only checks a list of namespaces reliably one namespace at a time, so these loop.
+foreach (['Http', 'Facades', 'Commands'] as $layer) {
+    arch(sprintf('the %s layer does not touch the database, the cache or the event dispatcher', $layer))
+        ->expect('Codesmiths\\CirruxCalendar\\'.$layer)
+        ->not->toUse([DB::class, Cache::class, Event::class]);
+}
+
+foreach (['Facades', 'Commands'] as $layer) {
+    arch(sprintf('the %s layer calls actions instead of the connectors', $layer))
+        ->expect('Codesmiths\\CirruxCalendar\\'.$layer)
+        ->not->toUse([CirruxConnector::class, CirruxAuthConnector::class, Connector::class]);
+}
