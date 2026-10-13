@@ -103,7 +103,7 @@ Cirrux::calendars(): Collection<int, Calendar>                  // cache 24 uur
 
 Cirrux::calendar($uuid)->events()
     ->between(CarbonInterface $from, CarbonInterface $to)
-    ->get(): Collection<int, Event>                              // uit weekcache
+    ->get(): Collection<int, CalendarEvent>                              // uit weekcache
 
 Cirrux::calendar($uuid)->events()->fresh()->between(...)->get() // cache overslaan (niet voor bezoekerspaden)
 
@@ -140,11 +140,12 @@ Cirrux::cancel(Booking|string $booking): void   // Cirrux mailt de annulering
 Stappen van `book()`:
 
 1. `$start` toetsen aan de regels van het event type: slotraster (`slot_interval`), `hours`, `min_notice`, `max_days_ahead`, niet in het verleden. Klopt dat niet → `InvalidSlotException`.
-2. **Lock per agenda** (`cirrux:lock:{calendar}`), niet per slot: aangrenzende slots overlappen door de buffers. Lukt de lock niet binnen de timeout → `SlotUnavailableException`. De refresh-job neemt dezelfde lock.
+2. **Lock per agenda** (`cirrux:lock:{calendar}`), niet per slot: aangrenzende slots overlappen door de buffers. Lukt de lock niet binnen de timeout → `SlotUnavailableException`. Bij elke afwijzing volgt `BookingRejected`. De refresh-job neemt dezelfde lock.
 3. Verse check: events ophalen met een ruim venster (hele dag rond het slot, plus de buffers), daarna lokaal filteren op echte overlap. Zo missen we niets als de API alleen events teruggeeft die binnen het venster starten. Bezet → `SlotUnavailableException`.
-4. Event aanmaken met de attendee (geen `recurrence`, request met `$tries = 1`).
-5. Rij in `cirrux_bookings` aanmaken. Mislukt dat, dan verwijderen we het event weer (compenserend), zodat er geen boeking in de agenda achterblijft die de app niet kent.
-6. Write-through in de weekcache, lock vrijgeven, `BookingCreated` dispatchen.
+4. `BookingCreating` dispatchen; een listener kan hier nog een veto geven.
+5. Event aanmaken met de attendee (geen `recurrence`, request met `$tries = 1`).
+6. Rij in `cirrux_bookings` aanmaken. Mislukt dat, dan verwijderen we het event weer (compenserend), zodat er geen boeking in de agenda achterblijft die de app niet kent.
+7. Write-through in de weekcache, lock vrijgeven, `BookingCreated` dispatchen.
 
 `cancel()` is idempotent: een `404` bij het verwijderen geldt als succes. Daarna wordt de status `cancelled` (`cancelled_by: user`) en volgt `BookingCancelled`.
 
@@ -159,8 +160,10 @@ Cirrux::forget(?string $calendarUuid = null): void    // cache legen
 
 Alle tijden worden in `createDtoFromResponse` meteen genormaliseerd naar `CarbonImmutable`-instants in UTC. Andere tijdzones bestaan alleen aan de rand (invoer en presentatie).
 
+Een agenda-item heet overal `CalendarEvent`, zodat het niet verward wordt met de Laravel-events hieronder.
+
 - `Calendar`: uuid, name, color
-- `Event`: id (occurrence), seriesId (nullable), title, start, end, allDay, transparency, attendees, isRecurring
+- `CalendarEvent`: id (occurrence), seriesId (nullable), title, start, end, allDay, transparency, attendees, isRecurring
 - `Slot`: start, end
 - `Booking`: id, eventId, start, end, attendee, eventType, status
 - `Attendee`: email, name
@@ -168,12 +171,56 @@ Alle tijden worden in `createDtoFromResponse` meteen genormaliseerd naar `Carbon
 
 ### Laravel-events
 
-- `BookingCreated`
-- `BookingCancelled` (met `cancelledBy`: `user` of `external`)
-- `TokenRefreshFailed` — refresh definitief mislukt, iemand moet `cirrux:login` draaien
-- `CalendarStale` — cache ouder dan `max_staleness`, er worden geen slots meer getoond
+Het package dispatcht bij elke betekenisvolle stap een eigen Laravel-event, zodat apps en andere packages erop kunnen voortbouwen zonder het package aan te passen: een lead aanmaken in het CRM, een Slack-bericht sturen, een meeting-link toevoegen, metrics bijhouden of een alert geven als de koppeling stuk is.
 
-Zodat de app er iets mee kan, zoals een lead aanmaken of een alert sturen.
+**Boekingen**
+
+| Event | Wanneer | Payload |
+| --- | --- | --- |
+| `BookingCreating` | in `BookSlot`, na validatie en verse check, vóór het aanmaken in Cirrux | `eventType`, `Slot`, `Attendee`, `notes` |
+| `BookingCreated` | boeking staat in Cirrux en in `cirrux_bookings` | `Booking` |
+| `BookingRejected` | slot ongeldig of bezet (`InvalidSlotException`/`SlotUnavailableException`) | `eventType`, `start`, `Attendee`, `reason` |
+| `BookingCancelled` | geannuleerd via het package of extern verwijderd | `Booking`, `cancelledBy` (`user`/`external`) |
+| `BookingRescheduled` | reconciliatie ziet dat het event in Cirrux is verschoven | `Booking`, `previousStart`, `previousEnd` |
+
+`BookingCreating` is het enige "vóór"-event. Een listener mag daar een `BookingVetoedException` (subclass van `CirruxException`) gooien om de boeking tegen te houden, bijvoorbeeld bij een geblokkeerd e-maildomein. `BookSlot` geeft daarna de lock vrij en dispatcht `BookingRejected`. Wie meer wil aanpassen, vervangt de Action via de container.
+
+**Agenda-items** (alleen wat via het package loopt; wijzigingen die iemand direct in Cirrux maakt, zien we alleen bij de refresh)
+
+| Event | Wanneer | Payload |
+| --- | --- | --- |
+| `CalendarEventCreated` | `CreateEvent` geslaagd | `calendarUuid`, `CalendarEvent` |
+| `CalendarEventDeleted` | `DeleteEvent` geslaagd (ook bij `404`) | `calendarUuid`, `eventId` |
+
+**Cache en synchronisatie**
+
+| Event | Wanneer | Payload |
+| --- | --- | --- |
+| `CalendarRefreshed` | `RefreshCalendar` geslaagd | `calendarUuid`, `from`, `to`, aantal events, aantal API-calls |
+| `CalendarRefreshFailed` | refresh mislukt; de oude cache blijft staan | `calendarUuid`, `CirruxException` |
+| `CalendarStale` | `refreshed_at` ouder dan `max_staleness`; er worden geen slots getoond | `calendarUuid`, `refreshedAt` |
+| `RateLimited` | `429` van Cirrux of de lokale limiter | `retryAfter` |
+
+`CalendarStale` wordt hooguit één keer per `max_staleness`-periode per agenda gedispatcht (cache-flag), zodat een drukke boekingspagina geen alert-storm geeft.
+
+**Authenticatie**
+
+| Event | Wanneer | Payload |
+| --- | --- | --- |
+| `LoggedIn` | `CompleteDeviceLogin` geslaagd | `expiresAt` |
+| `LoggedOut` | `Logout` | — |
+| `TokenRefreshed` | `RefreshAccessToken` geslaagd | `expiresAt` |
+| `TokenRefreshFailed` | refresh definitief mislukt; iemand moet `cirrux:login` draaien | `CirruxAuthException` |
+
+Tokens zitten nooit in een payload.
+
+Conventies:
+
+- Alle events staan in `src/Events/`, zijn `final readonly` en gebruiken `Dispatchable`.
+- De payload bestaat uit DTO's en scalars, geen Eloquent-models of connectors. Zo zijn ze veilig te serialiseren voor queued listeners.
+- Alleen Actions dispatchen events. Facade, commands en de HTTP-laag doen dat nooit zelf.
+- Events die volgen op een database-write (`BookingCreated`, `BookingCancelled`, `BookingRescheduled`) implementeren `ShouldDispatchAfterCommit`. Listeners zien dus nooit een boeking die daarna wordt teruggedraaid.
+- De events zijn publieke API: de payload hernoemen of weghalen is een breaking change en komt in de changelog. De README krijgt een tabel met alle events.
 
 ## Caching
 
@@ -312,7 +359,7 @@ src/
   Availability/Availability.php // fluent API bovenop de calculator
   Availability/SlotCalculator.php // puur: werktijden + regels + events → slots
   Data/                         // DTO's
-  Events/                       // BookingCreated, BookingCancelled, TokenRefreshFailed, CalendarStale
+  Events/                       // Laravel-events, zie "Laravel-events"
   Exceptions/                   // CirruxException + subclasses
   Commands/
 database/migrations/            // cirrux_tokens, cirrux_bookings
@@ -335,7 +382,7 @@ Elke handeling met bijwerkingen is een eigen Action-class onder `src/Actions/`, 
 | `Events\DeleteEvent` | event verwijderen (404 = ok) + write-through | `CalendarResource`, `CancelBooking` |
 | `Cache\RefreshCalendar` | lock → alle pagina's ophalen → `putMany` → `refreshed_at` | `Cirrux::refresh()`, `cirrux:refresh` |
 | `Cache\ForgetCalendar` | buckets en `refreshed_at` wissen | `Cirrux::forget()` |
-| `Booking\BookSlot` | valideren → lock → verse check → `CreateEvent` → `cirrux_bookings` → `BookingCreated` | `Cirrux::book()` |
+| `Booking\BookSlot` | valideren → lock → verse check → `BookingCreating` → `CreateEvent` → `cirrux_bookings` → `BookingCreated` | `Cirrux::book()` |
 | `Booking\CancelBooking` | `DeleteEvent` → status `cancelled` → `BookingCancelled` | `Cirrux::cancel()` |
 | `Booking\ReconcileBookings` | extern verwijderde of verschoven boekingen bijwerken | `RefreshCalendar` |
 
@@ -348,7 +395,7 @@ Conventies:
 
 `cirrux_bookings` houdt de koppeling bij tussen een boeking (eigen id) en het Cirrux-event-id, zodat de app die erbovenop bouwt nooit met Cirrux-ids hoeft te werken. Kolommen o.a. `status` (`confirmed`/`cancelled`), `cancelled_at` en `cancelled_by` (`user`/`external`).
 
-**Reconciliatie:** de refresh-job controleert de bevestigde boekingen binnen het opgehaalde venster. Ontbreekt het event in Cirrux (handmatig verwijderd), dan wordt de status `cancelled` met `cancelled_by: external` en volgt `BookingCancelled`. Een event dat in Cirrux is verschoven, krijgt in `cirrux_bookings` de nieuwe start en eind.
+**Reconciliatie:** de refresh-job controleert de bevestigde boekingen binnen het opgehaalde venster. Ontbreekt het event in Cirrux (handmatig verwijderd), dan wordt de status `cancelled` met `cancelled_by: external` en volgt `BookingCancelled`. Een event dat in Cirrux is verschoven, krijgt in `cirrux_bookings` de nieuwe start en eind, en volgt `BookingRescheduled`.
 
 ## Kwaliteit en tooling
 
@@ -360,8 +407,9 @@ Conventies:
   - DTO's zijn `readonly`
   - exceptions erven van een gedeelde `CirruxException`
   - classes in `Actions` zijn `final` en `readonly` en hebben een publieke `handle()`-methode
+  - classes in `Events` zijn `final` en `readonly`; alleen `Actions` mag `event()`/`::dispatch()` aanroepen
   - `Facades`, `Commands` en `Http` gebruiken geen `Cache`, `DB` of connectors rechtstreeks voor schrijfacties, maar Actions
-- **Type coverage:** `pest --type-coverage --min=100` (dev-dependency `pestphp/pest-plugin-type-coverage`). Elke parameter, property en return type expliciet getypeerd; generics via PHPDoc (`Collection<int, Event>`).
+- **Type coverage:** `pest --type-coverage --min=100` (dev-dependency `pestphp/pest-plugin-type-coverage`). Elke parameter, property en return type expliciet getypeerd; generics via PHPDoc (`Collection<int, CalendarEvent>`).
 - **Statische analyse:** Larastan op level `max`, zonder baseline.
 - **Coverage:** minimaal 90% code coverage (`pest --coverage --min=90`).
 - **Composer-scripts:** `test`, `test:types`, `test:coverage`, `analyse`, `format`, plus `check` dat ze allemaal draait.
@@ -373,7 +421,9 @@ Conventies:
 2. **Events** — `EventQuery`, DTO's (UTC-normalisatie, `seriesId`), `CreateEvent`/`DeleteEvent`, paginering, contract-tests die open punt 3 beantwoorden.
 3. **Caching** — `EventCache`, `RefreshCalendar`/`ForgetCalendar`, `cirrux:refresh`, write-through, fail closed, rate limiting en 429-afhandeling via de rate-limit-plugin.
 4. **Beschikbaarheid** — `SlotCalculator` incl. buffers, min notice, tijdzones, zomertijd-overgangen.
-5. **Boeken** — `BookSlot`/`CancelBooking`/`ReconcileBookings`, validatie, agenda-lock + verse check, `cirrux_bookings`, reconciliatie, Laravel-events.
+5. **Boeken** — `BookSlot`/`CancelBooking`/`ReconcileBookings`, validatie, agenda-lock + verse check, `cirrux_bookings`, reconciliatie, boekings-events.
+
+Elke fase levert de Laravel-events van de eigen Actions mee; ze zijn geen losse fase.
 
 ## Testen
 
@@ -389,4 +439,5 @@ Conventies:
   - `cancel()` op een `404`
   - reconciliatie
 - Cache: `assertSentCount(0)` per bezoekersscenario (slots tonen) en `assertSentCount(1)` voor de verse check van `book()`, ongeacht het aantal bezoekers. Ontbrekende of verouderde buckets geven geen slots.
+- Events: met `Event::fake()` per Action asserten welke events met welke payload worden gedispatcht, en welke niet (bijv. geen `BookingCreated` na een veto of een mislukte insert). Een test dat `BookingVetoedException` in een listener de boeking tegenhoudt zonder API-call voor het aanmaken. Een test dat de payloads te serialiseren zijn (`serialize`/`unserialize` round-trip) en geen tokens bevatten.
 - Contract: kleine opt-in testsuite tegen een vaste test-agenda (via env) om te detecteren wanneer de ongedocumenteerde API verandert. Legt overlap-semantiek, `timezone`-parameter en serie-ids vast. Ruimt op in `afterEach` en wordt overgeslagen (niet gefaald) zonder credentials.
