@@ -8,10 +8,12 @@ use Codesmiths\CirruxCalendar\Calendars\CalendarList;
 use Codesmiths\CirruxCalendar\Data\Calendar;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxAuthException;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxException;
+use Illuminate\Console\Attributes\Description;
+use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
-use Symfony\Component\Console\Attribute\AsCommand;
 
-#[AsCommand(name: 'cirrux:calendars', description: 'List your Cirrux calendars with their UUIDs')]
+#[Description('List your Cirrux calendars with their UUIDs')]
+#[Signature('cirrux:calendars')]
 final class CalendarsCommand extends Command
 {
     /**

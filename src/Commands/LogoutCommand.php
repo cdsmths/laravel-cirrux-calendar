@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Codesmiths\CirruxCalendar\Commands;
 
 use Codesmiths\CirruxCalendar\Actions\Auth\Logout;
+use Illuminate\Console\Attributes\Description;
+use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
-use Symfony\Component\Console\Attribute\AsCommand;
 
-#[AsCommand(name: 'cirrux:logout', description: 'Remove the stored Cirrux tokens')]
+#[Description('Remove the stored Cirrux tokens')]
+#[Signature('cirrux:logout')]
 final class LogoutCommand extends Command
 {
     public function handle(Logout $logout): int
