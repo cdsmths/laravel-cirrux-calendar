@@ -399,25 +399,74 @@ Conventies:
 
 ## Kwaliteit en tooling
 
-- **Ondersteuning:** PHP 8.3, 8.4 en 8.5+ (`"php": "^8.3"`), Laravel 12 en 13 (`^12.39 || ^13.0`, vanwege de laravel-plugin). Testen via Orchestra Testbench 10/11.
-- **Code style:** Laravel Pint met de `laravel`-preset. CI faalt op `pint --test`.
-- **Tests:** Pest, inclusief architectuurtests:
-  - `declare(strict_types=1)` in alle bestanden onder `src/`
-  - geen `dd`, `dump`, `ray` of `env()` buiten `config/`
-  - DTO's zijn `readonly`
-  - exceptions erven van een gedeelde `CirruxException`
-  - classes in `Actions` zijn `final` en `readonly` en hebben een publieke `handle()`-methode
-  - classes in `Events` zijn `final` en `readonly`; alleen `Actions` mag `event()`/`::dispatch()` aanroepen
-  - `Facades`, `Commands` en `Http` gebruiken geen `Cache`, `DB` of connectors rechtstreeks voor schrijfacties, maar Actions
-- **Type coverage:** `pest --type-coverage --min=100` (dev-dependency `pestphp/pest-plugin-type-coverage`). Elke parameter, property en return type expliciet getypeerd; generics via PHPDoc (`Collection<int, CalendarEvent>`).
-- **Statische analyse:** Larastan op level `max`, zonder baseline.
-- **Coverage:** minimaal 90% code coverage (`pest --coverage --min=90`).
-- **Composer-scripts:** `test`, `test:types`, `test:coverage`, `analyse`, `format`, plus `check` dat ze allemaal draait.
-- **CI:** GitHub Actions met een matrix over PHP 8.3/8.4/8.5 × Laravel 12/13 met prefer-stable, plus prefer-lowest alleen op PHP 8.3. Pint, Larastan en type coverage als aparte jobs.
+We volgen de code-patronen en tooling van Nuno Maduro, zoals in [`nunomaduro/laravel-starter-kit`](https://github.com/nunomaduro/laravel-starter-kit) (stand okt 2026). Waar een package iets anders vraagt dan een app, staat dat erbij.
+
+### Codepatronen
+
+- `declare(strict_types=1)` overal, en elke class `final`. Uitbreiden gebeurt via de container (Action vervangen) en via Laravel-events, niet via overerving.
+- Actions: `final readonly class` met één `handle()`-methode (zie [Actions](#actions)).
+- DTO's en events: `final readonly class` met promoted constructor-properties; geen arrays als publieke return type.
+- Altijd `CarbonImmutable`, nooit mutable `Carbon` of `DateTime`.
+- Strikte vergelijkingen (`===`), early returns, geen `else` na een `return`.
+- Volledig getypeerd; docblocks alleen voor generics (`Collection<int, CalendarEvent>`) of als een type niet anders uit te drukken is.
+- Beschrijvende namen (`isWithinWorkingHours()`, niet `check()`).
+- Geen "Service"- of "Manager"-classes: handelingen zijn Actions, lezen gebeurt via query-objecten (`EventQuery`, `Availability`).
+- Wat níet meekomt: `nunomaduro/essentials` vereisen we niet, omdat het globaal app-gedrag aanpast (strict models, immutable dates, enz.). Dat is aan de app, niet aan een package.
+
+### Tooling
+
+| Tool | Configuratie |
+| --- | --- |
+| **Pint** | `laravel`-preset plus Nuno's strikte regels: `declare_strict_types`, `final_class`, `date_time_immutable`, `strict_comparison`, `global_namespace_import`, `mb_str_functions`, `ordered_class_elements`, `protected_to_private`, `no_useless_else`, `no_superfluous_elseif`, enz. |
+| **Rector** | `rector/rector` + `driftingly/rector-laravel` met de Laravel-sets (code quality, collection, facade aliases, if-helpers), `withPreparedSets(deadCode, codeQuality, typeDeclarations, privatization, earlyReturn, codingStyle)` en `withPhpSets()`, die het PHP-niveau uit `composer.json` (8.3) haalt. |
+| **Larastan** | level `max`, `bleedingEdge`, de Carbon-extensie, geen baseline. |
+| **Pest** | v5, met `pest-plugin-laravel` en `pest-plugin-type-coverage`. |
+| **Type coverage** | `--min=100`. |
+| **Code coverage** | `--exactly=100.0`. De opt-in contract-suite telt niet mee. |
+| **Overig** | `roave/security-advisories` als dev-dependency. Caches van Rector en PHPStan in `tmp/` (in `.gitignore`). |
+
+**Architectuurtests** (`tests/Unit/ArchTest.php`):
+
+- `arch()->preset()->php()`, `->strict()`, `->laravel()` en `->security()`.
+- Uitzondering op `strict()`: de Saloon-connectors en -requests in `Http` mogen `protected` methodes hebben, omdat Saloon ze zo definieert (`defaultHeaders()`, `resolveEndpoint()`, `resolveLimits()`, …).
+- Eigen regels bovenop de presets:
+  - DTO's zijn `readonly`.
+  - Exceptions erven van `CirruxException`.
+  - Classes in `Actions` zijn `readonly` en hebben een publieke `handle()`-methode.
+  - Classes in `Events` zijn `readonly`; alleen `Actions` mag events dispatchen.
+  - `Facades`, `Commands` en `Http` doen geen schrijfacties zelf (geen `Cache`, `DB` of connectors), maar roepen Actions aan.
+  - Geen `env()` buiten `config/`.
+
+**`tests/Pest.php`**, zoals in de starter kit:
+
+- `Http::preventStrayRequests()` en Saloon's `Config::preventStrayRequests()`: geen enkele test praat per ongeluk met Cirrux.
+- `Sleep::fake()`: polling van de device flow en `Retry-After` kosten geen echte tijd. Daarom wacht de code altijd via `Sleep::for()`, nooit via `sleep()`.
+- `$this->freezeTime()`: deterministische slots en tokenverlooptijden.
+- `Str::createUuidsNormally()`.
+
+**Composer-scripts** (namen als in de starter kit):
+
+```json
+"lint": ["rector", "pint --parallel"],
+"test:lint": ["pint --parallel --test", "rector --dry-run"],
+"test:types": "phpstan",
+"test:type-coverage": "pest --type-coverage --min=100",
+"test:unit": "XDEBUG_MODE=coverage pest --parallel --coverage --exactly=100.0",
+"test:contract": "pest --testsuite=Contract",
+"test": ["@test:lint", "@test:types", "@test:type-coverage", "@test:unit"]
+```
+
+### Ondersteuning en CI
+
+- **Ondersteuning:** PHP 8.3, 8.4 en 8.5+ (`"php": "^8.3"`), Laravel 12 en 13 (`^12.39 || ^13.0`, vanwege de laravel-plugin). Testen via Orchestra Testbench 10/11. De starter kit vraagt PHP 8.5, maar voor een package houden we het bereik breed.
+- **CI (GitHub Actions):**
+  - `test:lint`, `test:types` en `test:type-coverage` als aparte jobs op PHP 8.5.
+  - `test:unit` als matrix over PHP 8.3/8.4/8.5 × Laravel 12/13 met prefer-stable, plus prefer-lowest alleen op PHP 8.3.
+  - Een wekelijkse workflow (`schedule`) die `test:contract` draait tegen de test-agenda, met secrets; mislukt die, dan is de API veranderd.
 
 ## Fasering
 
-1. **Fundament** — package-skelet (spatie/laravel-package-tools), Pint, Pest, Larastan, type coverage en CI vanaf de eerste commit, config + validatie, Saloon-connectors, `DatabaseTokenStore`, de auth-Actions, `cirrux:login` (device flow), `cirrux:calendars`. Doel: met eigen account agenda's kunnen ophalen.
+1. **Fundament** — package-skelet (spatie/laravel-package-tools), Pint, Rector, Pest, Larastan, type coverage, 100% coverage en CI vanaf de eerste commit, config + validatie, Saloon-connectors, `DatabaseTokenStore`, de auth-Actions, `cirrux:login` (device flow), `cirrux:calendars`. Doel: met eigen account agenda's kunnen ophalen.
 2. **Events** — `EventQuery`, DTO's (UTC-normalisatie, `seriesId`), `CreateEvent`/`DeleteEvent`, paginering, contract-tests die open punt 3 beantwoorden.
 3. **Caching** — `EventCache`, `RefreshCalendar`/`ForgetCalendar`, `cirrux:refresh`, write-through, fail closed, rate limiting en 429-afhandeling via de rate-limit-plugin.
 4. **Beschikbaarheid** — `SlotCalculator` incl. buffers, min notice, tijdzones, zomertijd-overgangen.
