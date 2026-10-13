@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use Saloon\Config;
+use Saloon\Http\Faking\MockClient;
 
 pest()->extend(TestCase::class)
     ->beforeEach(function (): void {
@@ -14,6 +15,7 @@ pest()->extend(TestCase::class)
         Http::preventStrayRequests();
         Config::preventStrayRequests();
         Sleep::fake();
+        MockClient::destroyGlobal();
 
         $this->freezeTime();
     })
