@@ -7,11 +7,14 @@ namespace Codesmiths\CirruxCalendar;
 use Codesmiths\CirruxCalendar\Actions\Auth\RefreshAccessToken;
 use Codesmiths\CirruxCalendar\Auth\DatabaseTokenStore;
 use Codesmiths\CirruxCalendar\Auth\TokenStore;
+use Codesmiths\CirruxCalendar\Http\CirruxConnector;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Support\Facades\Cache;
 use LogicException;
+use Saloon\RateLimitPlugin\Contracts\RateLimitStore;
+use Saloon\RateLimitPlugin\Stores\LaravelCacheStore;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -33,6 +36,10 @@ final class CirruxCalendarServiceProvider extends PackageServiceProvider
         $this->app->when(RefreshAccessToken::class)
             ->needs(LockProvider::class)
             ->give(fn (): LockProvider => $this->lockProvider());
+
+        $this->app->when(CirruxConnector::class)
+            ->needs(RateLimitStore::class)
+            ->give(fn (): RateLimitStore => new LaravelCacheStore($this->cache()));
     }
 
     private function cache(): CacheRepository
