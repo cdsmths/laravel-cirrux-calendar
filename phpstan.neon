@@ -1,6 +1,7 @@
 includes:
     - vendor/larastan/larastan/extension.neon
     - vendor/nesbot/carbon/extension.neon
+    - vendor/phpstan/phpstan/conf/bleedingEdge.neon
 
 parameters:
     level: max
@@ -8,6 +9,6 @@ parameters:
         - src
         - config
     tmpDir: tmp/phpstan
-    treatPhpDocTypesAsCertain: false
-
-    # bleedingEdge is included via the larastan extension; enable it explicitly too.
+    # The package's own config/ directory is where env() belongs.
+    configDirectories:
+        - config
