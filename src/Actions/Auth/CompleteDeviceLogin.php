@@ -45,8 +45,8 @@ final readonly class CompleteDeviceLogin
             $error = $this->errorCode($response);
 
             if ($error === null && $response->successful()) {
+                /** @var Tokens $tokens */
                 $tokens = $response->dtoOrFail();
-                assert($tokens instanceof Tokens);
 
                 $this->tokens->put($tokens);
                 event(new LoggedIn($tokens->expiresAt));

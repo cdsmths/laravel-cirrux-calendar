@@ -23,9 +23,7 @@ arch()->preset()->strict()->ignoring([
 // does not have. laravel/pint registers its own `App\` namespace in vendor, so
 // we skip it to avoid checking Pint's internals.
 arch()->preset()->laravel()->ignoring('App');
-arch()->preset()->security()->ignoring([
-    'assert',
-]);
+arch()->preset()->security();
 
 arch('exceptions extend the base exception')
     ->expect('Codesmiths\CirruxCalendar\Exceptions')

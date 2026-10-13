@@ -58,6 +58,7 @@ final readonly class RefreshAccessToken
     public function handle(?string $rejectedAccessToken = null): Tokens
     {
         try {
+            /** @var Tokens $tokens */
             $tokens = $this->locks
                 ->lock(self::LOCK, self::LOCK_SECONDS)
                 ->block(Config::integer('cirrux.lock.timeout'), fn (): Tokens => $this->refresh($rejectedAccessToken));
@@ -68,8 +69,6 @@ final readonly class RefreshAccessToken
 
             throw $exception;
         }
-
-        assert($tokens instanceof Tokens);
 
         return $tokens;
     }
@@ -96,8 +95,8 @@ final readonly class RefreshAccessToken
             throw new CirruxRequestException(sprintf('Refreshing the Cirrux token failed (HTTP %d).', $response->status()), $response->status());
         }
 
+        /** @var Tokens $tokens */
         $tokens = $response->dtoOrFail();
-        assert($tokens instanceof Tokens);
 
         // Persist before anything uses the new pair: the old refresh token is already dead.
         $this->tokens->put($tokens);

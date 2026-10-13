@@ -22,8 +22,8 @@ final readonly class StartDeviceLogin
             throw new CirruxAuthException(sprintf('Cirrux refused to start the login (HTTP %d).', $response->status()));
         }
 
+        /** @var DeviceCode $deviceCode */
         $deviceCode = $response->dtoOrFail();
-        assert($deviceCode instanceof DeviceCode);
 
         return $deviceCode;
     }
