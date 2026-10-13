@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Codesmiths\CirruxCalendar\Actions\Cache;
 
 use Carbon\CarbonImmutable;
+use Codesmiths\CirruxCalendar\Actions\Booking\ReconcileBookings;
 use Codesmiths\CirruxCalendar\Calendars\EventCache;
 use Codesmiths\CirruxCalendar\Data\CalendarEvent;
 use Codesmiths\CirruxCalendar\Data\CirruxFailure;
@@ -21,6 +22,7 @@ use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Config;
 use Saloon\Http\Response;
+use Throwable;
 
 final readonly class RefreshCalendar
 {
@@ -39,6 +41,7 @@ final readonly class RefreshCalendar
         private EventCache $cache,
         private CirruxConnector $connector,
         private LockProvider $locks,
+        private ReconcileBookings $reconcile,
     ) {}
 
     /**
@@ -53,22 +56,38 @@ final readonly class RefreshCalendar
     public function handle(string $calendarUuid): void
     {
         try {
-            /** @var CalendarRefreshed $refreshed */
-            $refreshed = $this->locks
+            /** @var array{CalendarRefreshed, Throwable|null} $result */
+            $result = $this->locks
                 ->lock('cirrux:lock:'.$calendarUuid, self::LOCK_SECONDS)
-                ->block(Config::integer('cirrux.lock.timeout'), fn (): CalendarRefreshed => $this->refresh($calendarUuid));
+                ->block(Config::integer('cirrux.lock.timeout'), fn (): array => $this->refresh($calendarUuid));
         } catch (LockTimeoutException $exception) {
             $this->fail($calendarUuid, new CirruxRequestException('Timed out waiting for another process to refresh the calendar.', 0, $exception));
         } catch (CirruxException $exception) {
             $this->fail($calendarUuid, $exception);
         }
 
-        // Phase 5: ReconcileBookings runs here, on the events that were just stored.
+        [$refreshed, $reconciliationFailure] = $result;
 
-        event($refreshed);
+        // Announced outside the lock, so a listener can take it. When the reconciliation failed, that
+        // failure is what the caller gets: it wins over anything a listener throws.
+        try {
+            event($refreshed);
+        } finally {
+            if ($reconciliationFailure instanceof Throwable) {
+                $this->rethrow($reconciliationFailure);
+            }
+        }
     }
 
-    private function refresh(string $calendarUuid): CalendarRefreshed
+    private function rethrow(Throwable $throwable): never
+    {
+        throw $throwable;
+    }
+
+    /**
+     * @return array{CalendarRefreshed, Throwable|null} the announcement, and the failure of the reconciliation if it failed
+     */
+    private function refresh(string $calendarUuid): array
     {
         [$from, $to] = $this->cache->refreshWindow();
 
@@ -91,9 +110,23 @@ final readonly class RefreshCalendar
             }
         }
 
-        $this->cache->replace($calendarUuid, $from, $to, collect(array_values($events)), CarbonImmutable::now('UTC'));
+        $events = collect(array_values($events));
 
-        return new CalendarRefreshed($calendarUuid, $from, $to, count($events), $apiCalls);
+        $this->cache->replace($calendarUuid, $from, $to, $events, CarbonImmutable::now('UTC'));
+
+        $refreshed = new CalendarRefreshed($calendarUuid, $from, $to, $events->count(), $apiCalls);
+
+        // Still under the calendar lock, so booking and cancelling cannot interleave. A failure
+        // here is a database error, not a Cirrux one, so it is not announced as a failed refresh
+        // and not swallowed. The cache was replaced by then, so the refresh itself did succeed:
+        // the caller announces CalendarRefreshed (outside the lock) and then throws the failure.
+        try {
+            $this->reconcile->handle($calendarUuid, $from, $to, $events);
+        } catch (Throwable $throwable) {
+            return [$refreshed, $throwable];
+        }
+
+        return [$refreshed, null];
     }
 
     /**

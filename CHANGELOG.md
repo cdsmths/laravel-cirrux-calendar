@@ -6,7 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the Cirrux calendar endpoints are undocumented, releases stay on 0.x and a minor release may contain breaking changes.
 
-## [Unreleased]
+## [0.1.1] - 2026-10-14
+
+### Added
+
+- Availability: `Cirrux::availability('demo')->between($from, $to)->inTimezone($tz)->slots()` and `isFree($start)`, with working hours in local wall-clock time, buffers around every busy event, minimum notice, a booking horizon and safe handling of DST changes. Slots are read from the cache only; when the cache cannot vouch for the window, `slots()` returns nothing and `CalendarStale` is dispatched.
+- Booking: `Cirrux::book('demo', $start, $attendee, $notes)` and `Cirrux::cancel($booking)`, with a per-calendar lock, a fresh check against Cirrux, a veto through `BookingCreating`, and a compensating delete when the booking cannot be stored.
+- A `cirrux_bookings` table (publish and run the migration) and reconciliation on every refresh: a booking whose event moved is rescheduled, and one whose event is missing in two consecutive refreshes is marked as cancelled externally.
+- Events `CalendarStale`, `BookingCreating`, `BookingCreated`, `BookingRejected`, `BookingCancelled` and `BookingRescheduled`.
+- Exceptions `InvalidSlotException`, `SlotUnavailableException`, `BookingVetoedException` and `BookingNotFoundException`.
+
+### Changed
+
+- The refresh now covers `[now - 2 days, now + weeks_ahead weeks)` instead of starting at the current ISO week.
+- Config validation is stricter: `max_days_ahead <= (weeks_ahead - 1) * 7`, `buffer_before <= 1440`, `duration + buffer_after <= 1440` and `max_staleness <= 86400`, plus every field of an event type.
+- `DeleteEvent::handle()` takes an optional `$refreshSeries` flag and returns whether a series refresh is still needed.
+
+## [0.1.0] - 2026-10-13
 
 ### Added
 
@@ -14,7 +30,6 @@ While the Cirrux calendar endpoints are undocumented, releases stay on 0.x and a
 - `Cirrux::calendars()` and `cirrux:calendars` to list the calendars of the logged in user.
 - `Cirrux::calendar($uuid)->events()` to read, create and delete events, with cursor pagination and UTC normalisation.
 - A week cache for events, refreshed by `cirrux:refresh` / `Cirrux::refresh()` and cleared by `Cirrux::forget()`, with write-through on create and delete. Reads fail closed with a `StaleCalendarException` when the cache cannot vouch for the window.
-- Availability: `Cirrux::availability('demo')->between($from, $to)->slots()` and `isFree($start)`, with working hours in local wall-clock time, buffers around every busy event, minimum notice, a booking horizon and safe handling of DST changes.
-- Laravel events for every meaningful step: `LoggedIn`, `LoggedOut`, `TokenRefreshed`, `TokenRefreshFailed`, `CalendarEventCreated`, `CalendarEventDeleted`, `CalendarRefreshed`, `CalendarRefreshFailed`, `CalendarStale` and `RateLimited`.
+- Laravel events `LoggedIn`, `LoggedOut`, `TokenRefreshed`, `TokenRefreshFailed`, `CalendarEventCreated`, `CalendarEventDeleted`, `CalendarRefreshed`, `CalendarRefreshFailed` and `RateLimited`.
 - Config validation when the app boots (`InvalidConfigurationException`).
 - An opt-in contract test suite against a real Cirrux account (`composer test:contract`).

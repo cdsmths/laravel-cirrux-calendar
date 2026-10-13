@@ -395,9 +395,13 @@ Conventies:
 - Actions worden uit de container geresolved. Een app kan er dus één vervangen met `$this->app->bind(BookSlot::class, …)`, bijvoorbeeld om extra validatie toe te voegen, zonder het package te forken.
 - Actions roepen elkaar aan via constructor-injectie (`BookSlot` gebruikt `CreateEvent`), niet via de facade.
 
+Tijden in `cirrux_bookings` staan in UTC via een eigen cast (`UtcDateTime`), ongeacht `app.timezone`: Laravels `immutable_datetime` leest een tijdzoneloze kolom in de app-tijdzone.
+
+Wordt bij annuleren of bij de compenserende delete van `BookSlot` een serie verwijderd, dan vergeet `DeleteEvent` de cache en gebeurt de refresh pas ná het vrijgeven van de agenda-lock (locks zijn niet re-entrant). Een mislukte refresh daar maakt de annulering niet ongedaan.
+
 `cirrux_bookings` houdt de koppeling bij tussen een boeking (eigen id) en het Cirrux-event-id, zodat de app die erbovenop bouwt nooit met Cirrux-ids hoeft te werken. Kolommen o.a. `status` (`confirmed`/`cancelled`), `cancelled_at` en `cancelled_by` (`user`/`external`).
 
-**Reconciliatie:** de refresh-job controleert de bevestigde boekingen binnen het opgehaalde venster. Ontbreekt het event in Cirrux (handmatig verwijderd), dan wordt de status `cancelled` met `cancelled_by: external` en volgt `BookingCancelled`. Een event dat in Cirrux is verschoven, krijgt in `cirrux_bookings` de nieuwe start en eind, en volgt `BookingRescheduled`.
+**Reconciliatie:** de refresh-job controleert, binnen de agenda-lock, de bevestigde boekingen die volledig binnen het opgehaalde venster liggen. Ontbreekt het event in Cirrux, dan krijgt de boeking eerst `missing_since`; pas als het event ook in de volgende geslaagde refresh ontbreekt, wordt de status `cancelled` met `cancelled_by: external` en volgt `BookingCancelled`. Zo annuleert één onvolledige lijst (bug, haperende paginering) niet alle boekingen tegelijk. Beperking: zonder endpoint om één event op te halen ziet een event dat naar buiten het refresh-venster is verschoven eruit als verwijderd. Een event dat in Cirrux is verschoven, krijgt in `cirrux_bookings` de nieuwe start en eind, en volgt `BookingRescheduled`.
 
 ## Kwaliteit en tooling
 

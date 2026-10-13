@@ -6,16 +6,22 @@ use Carbon\CarbonImmutable;
 use Codesmiths\CirruxCalendar\Actions\Cache\RefreshCalendar;
 use Codesmiths\CirruxCalendar\Auth\TokenStore;
 use Codesmiths\CirruxCalendar\Calendars\EventCache;
+use Codesmiths\CirruxCalendar\Data\BookingStatus;
 use Codesmiths\CirruxCalendar\Data\CalendarEvent;
 use Codesmiths\CirruxCalendar\Data\Tokens;
+use Codesmiths\CirruxCalendar\Events\BookingRescheduled;
 use Codesmiths\CirruxCalendar\Events\CalendarRefreshed;
 use Codesmiths\CirruxCalendar\Events\CalendarRefreshFailed;
 use Codesmiths\CirruxCalendar\Events\RateLimited;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxRequestException;
 use Codesmiths\CirruxCalendar\Exceptions\RateLimitedException;
 use Codesmiths\CirruxCalendar\Http\Requests\Events\ListEvents;
+use Codesmiths\CirruxCalendar\Models\BookingRecord;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Schema;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Http\Response;
 use Saloon\Laravel\Facades\Saloon;
@@ -183,6 +189,104 @@ it('does not call Cirrux while another process holds the calendar lock', functio
     resolve(RefreshCalendar::class)->handle('cal-1');
 
     Saloon::assertSentCount(2);
+});
+
+function refreshTestBooking(string $eventId, string $start, string $end): BookingRecord
+{
+    return BookingRecord::query()->create([
+        'event_type' => 'demo',
+        'calendar_uuid' => 'cal-1',
+        'event_id' => $eventId,
+        'start_at' => $start,
+        'end_at' => $end,
+        'attendee_email' => 'jan@example.com',
+        'status' => BookingStatus::Confirmed,
+    ]);
+}
+
+it('reconciles the bookings with the stored events while it holds the calendar lock', function (): void {
+    Event::fake([CalendarRefreshed::class, BookingRescheduled::class]);
+    $moved = refreshTestBooking('moved', '2026-10-29 09:00:00', '2026-10-29 09:30:00');
+    $gone = refreshTestBooking('gone', '2026-10-30 09:00:00', '2026-10-30 09:30:00');
+    Saloon::fake([ListEvents::class => MockResponse::make(['has_more' => false, 'data' => [
+        cirruxEventPayload('moved', '2026-10-29T10:00:00Z', '2026-10-29T10:30:00Z'),
+    ]])]);
+
+    $lockWasFree = [];
+    DB::listen(function () use (&$lockWasFree): void {
+        $probe = Cache::lock('cirrux:lock:cal-1', 5);
+        $free = $probe->get();
+        $lockWasFree[] = $free;
+
+        if ($free) {
+            $probe->release();
+        }
+    });
+
+    resolve(RefreshCalendar::class)->handle('cal-1');
+
+    expect($lockWasFree)->not->toBeEmpty()->and($lockWasFree)->each->toBeFalse()
+        ->and($moved->fresh()->start_at->toIso8601ZuluString())->toBe('2026-10-29T10:00:00Z')
+        ->and($gone->fresh()->missing_since?->toIso8601ZuluString())->toBe('2026-10-28T12:00:00Z');
+    Event::assertDispatched(BookingRescheduled::class, 1);
+    Event::assertDispatchedTimes(CalendarRefreshed::class, 1);
+});
+
+it('does not reconcile when the refresh fails', function (): void {
+    Event::fake([CalendarRefreshed::class, CalendarRefreshFailed::class, RateLimited::class]);
+    $gone = refreshTestBooking('gone', '2026-10-30 09:00:00', '2026-10-30 09:30:00');
+    Saloon::fake([
+        MockResponse::make(['has_more' => true, 'next_cursor' => 'c1', 'data' => []]),
+        MockResponse::make(['error' => 'boom'], 500),
+    ]);
+
+    expect(fn () => resolve(RefreshCalendar::class)->handle('cal-1'))->toThrow(CirruxRequestException::class);
+
+    expect($gone->fresh()->missing_since)->toBeNull();
+});
+
+it('announces the refreshed calendar and rethrows when the reconciliation fails on the database', function (): void {
+    Event::fake([CalendarRefreshed::class, CalendarRefreshFailed::class]);
+    Saloon::fake([ListEvents::class => MockResponse::make(['has_more' => false, 'data' => [
+        cirruxEventPayload('a', '2026-10-28T10:00:00Z', '2026-10-28T11:00:00Z'),
+    ]])]);
+    Schema::drop('cirrux_bookings');
+
+    expect(fn () => resolve(RefreshCalendar::class)->handle('cal-1'))->toThrow(QueryException::class);
+
+    expect(Cache::get('cirrux:refreshed:cal-1'))->not->toBeNull();
+    Event::assertDispatchedTimes(CalendarRefreshed::class, 1);
+    Event::assertNotDispatched(CalendarRefreshFailed::class);
+});
+
+it('announces the refresh outside the calendar lock, also when the reconciliation failed', function (): void {
+    Saloon::fake([ListEvents::class => MockResponse::make(['has_more' => false, 'data' => []])]);
+    $lockWasFree = [];
+    Event::listen(CalendarRefreshed::class, function () use (&$lockWasFree): void {
+        $probe = Cache::lock('cirrux:lock:cal-1', 5);
+        $lockWasFree[] = $probe->get();
+        $probe->release();
+    });
+
+    resolve(RefreshCalendar::class)->handle('cal-1');
+    Schema::drop('cirrux_bookings');
+
+    expect(fn () => resolve(RefreshCalendar::class)->handle('cal-1'))->toThrow(QueryException::class);
+
+    expect($lockWasFree)->toBe([true, true]);
+});
+
+it('throws the reconciliation failure, not what a listener throws', function (): void {
+    Saloon::fake([ListEvents::class => MockResponse::make(['has_more' => false, 'data' => []])]);
+    Event::listen(CalendarRefreshed::class, function (): never {
+        throw new RuntimeException('listener');
+    });
+
+    expect(fn () => resolve(RefreshCalendar::class)->handle('cal-1'))->toThrow(RuntimeException::class, 'listener');
+
+    Schema::drop('cirrux_bookings');
+
+    expect(fn () => resolve(RefreshCalendar::class)->handle('cal-1'))->toThrow(QueryException::class);
 });
 
 it('releases the lock after a failure', function (): void {
