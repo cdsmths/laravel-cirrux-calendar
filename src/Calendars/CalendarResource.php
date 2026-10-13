@@ -24,6 +24,7 @@ final readonly class CalendarResource
         return EventQuery::for(
             $this->uuid,
             $this->container->make(CirruxConnector::class),
+            $this->container->make(EventCache::class),
             $this->container->make(CreateEvent::class),
             $this->container->make(DeleteEvent::class),
         );

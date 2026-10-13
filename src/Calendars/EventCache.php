@@ -26,7 +26,15 @@ use Illuminate\Support\Facades\Config;
  * The cache holds plain arrays instead of DTOs: apps that set
  * `cache.serializable_classes` to false cannot unserialize objects.
  *
- * add() and remove() read and write a bucket in two steps, so callers take the calendar lock.
+ * add() and remove() read and write a bucket in two steps and take no lock. They are called by the
+ * write-through of CreateEvent and DeleteEvent, and BookSlot (phase 5) already holds the calendar
+ * lock when it calls CreateEvent; Laravel locks are not re-entrant, so locking here would deadlock.
+ * The consequence is eventual consistency: both read-modify-write a whole bucket, so a concurrent
+ * refresh can overwrite it with an older snapshot (also dropping other events, such as one created
+ * externally, so their slot looks free) or overwrite the write-through itself (a new event is missing,
+ * a deleted one stays). That lasts until the next successful refresh; if refreshes keep failing, until
+ * `max_staleness`, after which reads fail closed. A double booking cannot follow from this: book()
+ * (phase 5) checks fresh under the calendar lock.
  */
 final readonly class EventCache
 {
@@ -106,6 +114,35 @@ final readonly class EventCache
         return collect($events)
             ->sort(static fn (CalendarEvent $a, CalendarEvent $b): int => $a->start <=> $b->start)
             ->values();
+    }
+
+    /**
+     * The cached event with this id, wherever it sits inside the covered window. A series
+     * (an event whose id is the series id of a cached occurrence) is found by its first occurrence.
+     */
+    public function find(string $calendar, string $eventId): ?CalendarEvent
+    {
+        $found = null;
+
+        foreach ($this->coveredKeys($calendar, null) as $key) {
+            $bucket = $this->cache->get($key);
+
+            if (! is_array($bucket)) {
+                continue;
+            }
+
+            foreach ($bucket as $row) {
+                $event = CalendarEvent::fromArray(Arr::wrap($row));
+
+                if ($event->id === $eventId) {
+                    return $event;
+                }
+
+                $found ??= $event->seriesId === $eventId ? $event : null;
+            }
+        }
+
+        return $found;
     }
 
     /**

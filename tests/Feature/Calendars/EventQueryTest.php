@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Carbon\CarbonImmutable;
 use Codesmiths\CirruxCalendar\Auth\TokenStore;
 use Codesmiths\CirruxCalendar\Calendars\CalendarResource;
+use Codesmiths\CirruxCalendar\Calendars\EventCache;
 use Codesmiths\CirruxCalendar\Calendars\EventQuery;
 use Codesmiths\CirruxCalendar\Data\CalendarEvent;
 use Codesmiths\CirruxCalendar\Data\NewEvent;
@@ -12,6 +13,7 @@ use Codesmiths\CirruxCalendar\Data\Tokens;
 use Codesmiths\CirruxCalendar\Events\CalendarEventCreated;
 use Codesmiths\CirruxCalendar\Events\CalendarEventDeleted;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxRequestException;
+use Codesmiths\CirruxCalendar\Exceptions\StaleCalendarException;
 use Codesmiths\CirruxCalendar\Facades\Cirrux;
 use Codesmiths\CirruxCalendar\Http\Requests\Events\CreateEvent;
 use Codesmiths\CirruxCalendar\Http\Requests\Events\DeleteEvent;
@@ -23,6 +25,7 @@ use Saloon\Http\Response;
 use Saloon\Laravel\Facades\Saloon;
 
 beforeEach(function (): void {
+    $this->travelTo(CarbonImmutable::parse('2026-10-20T09:00:00Z'));
     resolve(TokenStore::class)->put(new Tokens('access', 'refresh', CarbonImmutable::now('UTC')->addHour()));
 });
 
@@ -41,9 +44,25 @@ function slot(string $id, string $start, string $end): array
 
 function windowQuery(): EventQuery
 {
+    return cachedWindowQuery()->fresh();
+}
+
+function cachedWindowQuery(): EventQuery
+{
     return Cirrux::calendar('cal-1')->events()->between(
         CarbonImmutable::parse('2026-10-20T10:00:00Z'),
         CarbonImmutable::parse('2026-10-20T12:00:00Z'),
+    );
+}
+
+function fillQueryCache(array $events = [], string $calendar = 'cal-1'): void
+{
+    resolve(EventCache::class)->replace(
+        $calendar,
+        CarbonImmutable::parse('2026-10-19T00:00:00Z'),
+        CarbonImmutable::parse('2026-11-02T00:00:00Z'),
+        collect($events)->map(static fn (array $event): CalendarEvent => CalendarEvent::fromApi($event)),
+        CarbonImmutable::now('UTC'),
     );
 }
 
@@ -136,8 +155,8 @@ it('never changes the query it was called on', function (): void {
 
     Saloon::fake([ListEvents::class => MockResponse::make(['has_more' => false, 'data' => []])]);
 
-    $window->get();
-    $later->get();
+    $window->fresh()->get();
+    $later->fresh()->get();
     $fresh->get();
 
     $sent = array_map(
@@ -162,13 +181,62 @@ it('asks Cirrux for a day before the window and filters the lookback locally', f
         ->and($events->pluck('id')->all())->toBe(['runs-into', 'inside']);
 });
 
-it('goes to Cirrux with and without fresh', function (): void {
-    Saloon::fake([ListEvents::class => MockResponse::make(['has_more' => false, 'data' => []])]);
+it('reads from the cache without calling Cirrux, sorted on start', function (): void {
+    Saloon::fake([]);
+    fillQueryCache([
+        slot('late', '2026-10-20T11:00:00Z', '2026-10-20T11:30:00Z'),
+        slot('outside', '2026-10-21T11:00:00Z', '2026-10-21T11:30:00Z'),
+        slot('runs-into', '2026-10-20T09:30:00Z', '2026-10-20T10:30:00Z'),
+    ]);
 
-    windowQuery()->get();
-    windowQuery()->fresh()->get();
+    $events = cachedWindowQuery()->get();
 
-    Saloon::assertSentCount(2);
+    expect($events->pluck('id')->all())->toBe(['runs-into', 'late'])
+        ->and($events->first())->toBeInstanceOf(CalendarEvent::class);
+    Saloon::assertSentCount(0);
+});
+
+it('reads an empty cached window as no events', function (): void {
+    Saloon::fake([]);
+    fillQueryCache();
+
+    expect(cachedWindowQuery()->get()->all())->toBe([]);
+    Saloon::assertSentCount(0);
+});
+
+it('fails closed when the cache is missing, stale or does not cover the window', function (Closure $arrange): void {
+    Saloon::fake([]);
+    $arrange();
+
+    try {
+        cachedWindowQuery()->get();
+        $this->fail('Expected a StaleCalendarException.');
+    } catch (StaleCalendarException $staleCalendarException) {
+        expect($staleCalendarException->calendarUuid)->toBe('cal-1');
+    }
+
+    Saloon::assertSentCount(0);
+})->with([
+    'never refreshed' => [static fn (): null => null],
+    'another calendar' => [static fn () => fillQueryCache(calendar: 'cal-2')],
+    'older than max_staleness' => [function (): void {
+        fillQueryCache();
+        test()->travel(config()->integer('cirrux.cache.max_staleness') + 1)->seconds();
+    }],
+    'window beyond the coverage' => [function (): void {
+        resolve(EventCache::class)->replace('cal-1', CarbonImmutable::parse('2026-10-19T00:00:00Z'), CarbonImmutable::parse('2026-10-20T00:00:00Z'), collect(), CarbonImmutable::now('UTC'));
+    }],
+]);
+
+it('goes to Cirrux only after fresh', function (): void {
+    Saloon::fake([ListEvents::class => MockResponse::make(['has_more' => false, 'data' => [slot('a', '2026-10-20T10:00:00Z', '2026-10-20T10:30:00Z')]])]);
+    fillQueryCache();
+
+    expect(cachedWindowQuery()->get()->all())->toBe([]);
+    Saloon::assertSentCount(0);
+
+    expect(cachedWindowQuery()->fresh()->get()->pluck('id')->all())->toBe(['a']);
+    Saloon::assertSentCount(1);
 });
 
 it('accepts windows in any timezone', function (): void {
@@ -176,6 +244,7 @@ it('accepts windows in any timezone', function (): void {
 
     Cirrux::calendar('cal-1')->events()
         ->between(CarbonImmutable::parse('2026-10-20T12:00:00+02:00'), CarbonImmutable::parse('2026-10-20T14:00:00+02:00'))
+        ->fresh()
         ->get();
 
     $query = Saloon::mockClient()->getRecordedResponses()[0]->getPendingRequest()->query()->all();

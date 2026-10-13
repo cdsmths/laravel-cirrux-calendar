@@ -12,6 +12,7 @@ use Codesmiths\CirruxCalendar\Data\CalendarEvent;
 use Codesmiths\CirruxCalendar\Data\NewEvent;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxRequestException;
 use Codesmiths\CirruxCalendar\Exceptions\RateLimitedException;
+use Codesmiths\CirruxCalendar\Exceptions\StaleCalendarException;
 use Codesmiths\CirruxCalendar\Http\CirruxConnector;
 use Codesmiths\CirruxCalendar\Http\Requests\Events\ListEvents;
 use Illuminate\Support\Collection;
@@ -20,8 +21,7 @@ use LogicException;
 /**
  * The events of one calendar: an immutable query that reads, creates and deletes.
  *
- * Until the week cache exists (phase 3) every read goes to Cirrux, with or without fresh().
- * Phase 3 makes the cache the default for get(); fresh() is the flag that will skip it.
+ * Reads come from the week cache; fresh() skips it. Creating and deleting write through to the cache.
  */
 final readonly class EventQuery
 {
@@ -30,16 +30,17 @@ final readonly class EventQuery
     private function __construct(
         private string $calendarUuid,
         private CirruxConnector $connector,
+        private EventCache $cache,
         private CreateEvent $createEvent,
         private DeleteEvent $deleteEvent,
         private ?CarbonImmutable $from,
         private ?CarbonImmutable $to,
-        private bool $skipCache, // @phpstan-ignore property.onlyWritten (phase 3 reads it to bypass the week cache)
+        private bool $skipCache,
     ) {}
 
-    public static function for(string $calendarUuid, CirruxConnector $connector, CreateEvent $createEvent, DeleteEvent $deleteEvent): self
+    public static function for(string $calendarUuid, CirruxConnector $connector, EventCache $cache, CreateEvent $createEvent, DeleteEvent $deleteEvent): self
     {
-        return new self($calendarUuid, $connector, $createEvent, $deleteEvent, null, null, false);
+        return new self($calendarUuid, $connector, $cache, $createEvent, $deleteEvent, null, null, false);
     }
 
     /**
@@ -50,6 +51,7 @@ final readonly class EventQuery
         return new self(
             $this->calendarUuid,
             $this->connector,
+            $this->cache,
             $this->createEvent,
             $this->deleteEvent,
             CarbonImmutable::instance($from)->utc(),
@@ -59,15 +61,19 @@ final readonly class EventQuery
     }
 
     /**
-     * Skips the cache. Not for visitor paths.
+     * Reads from Cirrux instead of the week cache. Not for visitor paths: every call costs API requests.
      */
     public function fresh(): self
     {
-        return new self($this->calendarUuid, $this->connector, $this->createEvent, $this->deleteEvent, $this->from, $this->to, true);
+        return new self($this->calendarUuid, $this->connector, $this->cache, $this->createEvent, $this->deleteEvent, $this->from, $this->to, true);
     }
 
     /**
-     * Every event that overlaps the window, over all pages, once per id, sorted as Cirrux sent them.
+     * Every event that overlaps the window, once per id.
+     *
+     * By default this reads the week cache, sorted on start, without a single API call. When the
+     * cache cannot vouch for the window the read fails closed instead of answering "no events".
+     * After fresh() Cirrux is asked instead, over all pages, in the order Cirrux sent them.
      *
      * Cirrux is asked for `[from - 24h, to)` and the result is filtered locally on real overlap
      * with `[from, to)`. Whether Cirrux matches `time_min`/`time_max` on overlap or on start is
@@ -78,8 +84,9 @@ final readonly class EventQuery
      * @return Collection<int, CalendarEvent>
      *
      * @throws LogicException without between()
-     * @throws CirruxRequestException when a page fails
-     * @throws RateLimitedException when the rate limit is reached
+     * @throws StaleCalendarException when the cache is missing, too old or does not cover the window (not after fresh())
+     * @throws CirruxRequestException when a page fails (after fresh())
+     * @throws RateLimitedException when the rate limit is reached (after fresh())
      */
     public function get(): Collection
     {
@@ -87,6 +94,10 @@ final readonly class EventQuery
 
         $from = $this->from;
         $to = $this->to;
+
+        if (! $this->skipCache) {
+            return $this->cache->read($this->calendarUuid, $from, $to) ?? throw new StaleCalendarException($this->calendarUuid);
+        }
 
         // Internally everything is UTC, so Cirrux is asked for UTC too.
         $paginator = $this->connector->paginate(new ListEvents($this->calendarUuid, $from->subHours(self::LOOKBACK_HOURS), $to, 'UTC'));

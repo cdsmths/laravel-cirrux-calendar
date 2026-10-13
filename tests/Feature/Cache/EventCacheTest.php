@@ -376,6 +376,28 @@ it('does not touch any bucket without valid metadata', function (): void {
     expect(bucketIds('2026-W44'))->toBe(['a']);
 });
 
+it('finds an event by its id, or a series by one of its occurrences', function (): void {
+    $occurrence = new CalendarEvent('series-1_a', 'series-1', 'Weekly', CarbonImmutable::parse('2026-10-28T10:00:00Z'), CarbonImmutable::parse('2026-10-28T11:00:00Z'), false, Transparency::Opaque, [], true);
+    $cache = fillWeeks(events: [cachedEvent('plain', '2026-11-03T10:00:00Z', '2026-11-03T11:00:00Z'), $occurrence]);
+
+    expect($cache->find('cal-1', 'plain')?->id)->toBe('plain')
+        ->and($cache->find('cal-1', 'series-1_a'))->toEqual($occurrence)
+        ->and($cache->find('cal-1', 'series-1'))->toEqual($occurrence)
+        ->and($cache->find('cal-1', 'unknown'))->toBeNull()
+        ->and($cache->find('cal-2', 'plain'))->toBeNull();
+});
+
+it('finds nothing without metadata or in a missing bucket', function (): void {
+    $cache = fillWeeks(events: [cachedEvent('plain', '2026-10-28T10:00:00Z', '2026-10-28T11:00:00Z')]);
+    Cache::forget('cirrux:events:cal-1:2026-W44');
+
+    expect($cache->find('cal-1', 'plain'))->toBeNull();
+
+    Cache::forget('cirrux:refreshed:cal-1');
+
+    expect($cache->find('cal-1', 'plain'))->toBeNull();
+});
+
 it('does not recreate a covered bucket that went missing', function (): void {
     $cache = fillWeeks();
     Cache::forget('cirrux:events:cal-1:2026-W45');

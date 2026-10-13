@@ -6,6 +6,7 @@ use Codesmiths\CirruxCalendar\Exceptions\CirruxAuthException;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxException;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxRequestException;
 use Codesmiths\CirruxCalendar\Exceptions\RateLimitedException;
+use Codesmiths\CirruxCalendar\Exceptions\StaleCalendarException;
 
 it('carries the status and previous exception on a request exception', function (): void {
     $previous = new RuntimeException('boom');
@@ -26,6 +27,14 @@ it('carries the retry delay on a rate limited exception', function (): void {
     expect($exception)->toBeInstanceOf(CirruxException::class)
         ->and($exception->retryAfter)->toBe(30)
         ->and($exception->getMessage())->toBe('Cirrux rate limit reached; retry in 30 seconds.');
+});
+
+it('names the calendar on a stale calendar exception', function (): void {
+    $exception = new StaleCalendarException('cal-1');
+
+    expect($exception)->toBeInstanceOf(CirruxException::class)
+        ->and($exception->calendarUuid)->toBe('cal-1')
+        ->and($exception->getMessage())->toContain('cal-1')->toContain('cirrux:refresh');
 });
 
 it('is a cirrux exception', function (): void {
