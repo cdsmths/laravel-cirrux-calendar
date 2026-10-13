@@ -235,3 +235,35 @@ it('lets other delete failures through without dispatching', function (int $stat
     'server error' => 500,
     'forbidden' => 403,
 ]);
+
+it('forgets a series without refreshing and says a refresh is needed when asked not to refresh', function (): void {
+    fillWriteThroughCache([writeThroughEvent('series-1_a', '2026-10-28T10:00:00Z', '2026-10-28T11:00:00Z', 'series-1', true)]);
+    Saloon::fake([DeleteEventRequest::class => MockResponse::make('', 200)]);
+
+    $needsRefresh = resolve(DeleteEvent::class)->handle('cal-1', 'series-1_a', false);
+
+    expect($needsRefresh)->toBeTrue()
+        ->and(resolve(EventCache::class)->read('cal-1', CarbonImmutable::parse('2026-10-26T00:00:00Z'), CarbonImmutable::parse('2026-11-09T00:00:00Z')))->toBeNull();
+    Saloon::assertSentCount(1);
+    Saloon::assertNotSent(ListEvents::class);
+    Event::assertDispatched(CalendarEventDeleted::class);
+});
+
+it('needs no refresh for a plain event, whatever is asked', function (bool $refreshSeries): void {
+    fillWriteThroughCache([writeThroughEvent('plain', '2026-10-28T10:00:00Z', '2026-10-28T11:00:00Z')]);
+    Saloon::fake([DeleteEventRequest::class => MockResponse::make('', 200)]);
+
+    expect(resolve(DeleteEvent::class)->handle('cal-1', 'plain', $refreshSeries))->toBeFalse();
+    Saloon::assertSentCount(1);
+})->with([true, false]);
+
+it('reports that a series delete was refreshed at once by default', function (): void {
+    fillWriteThroughCache([writeThroughEvent('series-1_a', '2026-10-28T10:00:00Z', '2026-10-28T11:00:00Z', 'series-1', true)]);
+    Saloon::fake([
+        DeleteEventRequest::class => MockResponse::make('', 200),
+        ListEvents::class => MockResponse::make(['has_more' => false, 'data' => []]),
+    ]);
+
+    expect(resolve(DeleteEvent::class)->handle('cal-1', 'series-1_a'))->toBeFalse();
+    Saloon::assertSent(ListEvents::class);
+});

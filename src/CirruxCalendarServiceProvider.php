@@ -6,6 +6,8 @@ namespace Codesmiths\CirruxCalendar;
 
 use Codesmiths\CirruxCalendar\Actions\Auth\RefreshAccessToken;
 use Codesmiths\CirruxCalendar\Actions\Availability\ReportStaleCalendar;
+use Codesmiths\CirruxCalendar\Actions\Booking\BookSlot;
+use Codesmiths\CirruxCalendar\Actions\Booking\CancelBooking;
 use Codesmiths\CirruxCalendar\Actions\Cache\RefreshCalendar;
 use Codesmiths\CirruxCalendar\Auth\DatabaseTokenStore;
 use Codesmiths\CirruxCalendar\Auth\TokenStore;
@@ -39,7 +41,7 @@ final class CirruxCalendarServiceProvider extends PackageServiceProvider
         $package
             ->name('cirrux')
             ->hasConfigFile('cirrux')
-            ->hasMigration('create_cirrux_tokens_table')
+            ->hasMigrations(['create_cirrux_tokens_table', 'create_cirrux_bookings_table'])
             ->hasCommands([
                 CalendarsCommand::class,
                 LoginCommand::class,
@@ -60,6 +62,12 @@ final class CirruxCalendarServiceProvider extends PackageServiceProvider
         $this->app->when(RefreshCalendar::class)
             ->needs(LockProvider::class)
             ->give(fn (): LockProvider => $this->lockProvider());
+
+        foreach ([BookSlot::class, CancelBooking::class] as $action) {
+            $this->app->when($action)
+                ->needs(LockProvider::class)
+                ->give(fn (): LockProvider => $this->lockProvider());
+        }
 
         $this->app->when(EventCache::class)
             ->needs(CacheRepository::class)

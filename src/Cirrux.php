@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Codesmiths\CirruxCalendar;
 
+use Carbon\CarbonInterface;
 use Closure;
 use Codesmiths\CirruxCalendar\Actions\Availability\ReportStaleCalendar;
+use Codesmiths\CirruxCalendar\Actions\Booking\BookSlot;
+use Codesmiths\CirruxCalendar\Actions\Booking\CancelBooking;
 use Codesmiths\CirruxCalendar\Actions\Cache\ForgetCalendar;
 use Codesmiths\CirruxCalendar\Actions\Cache\RefreshCalendar;
 use Codesmiths\CirruxCalendar\Availability\Availability;
@@ -13,10 +16,16 @@ use Codesmiths\CirruxCalendar\Availability\SlotCalculator;
 use Codesmiths\CirruxCalendar\Calendars\CalendarList;
 use Codesmiths\CirruxCalendar\Calendars\CalendarResource;
 use Codesmiths\CirruxCalendar\Calendars\ConfiguredCalendars;
+use Codesmiths\CirruxCalendar\Data\Attendee;
+use Codesmiths\CirruxCalendar\Data\Booking;
 use Codesmiths\CirruxCalendar\Data\Calendar;
 use Codesmiths\CirruxCalendar\Data\EventType;
+use Codesmiths\CirruxCalendar\Exceptions\BookingNotFoundException;
+use Codesmiths\CirruxCalendar\Exceptions\BookingVetoedException;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxException;
 use Codesmiths\CirruxCalendar\Exceptions\InvalidConfigurationException;
+use Codesmiths\CirruxCalendar\Exceptions\InvalidSlotException;
+use Codesmiths\CirruxCalendar\Exceptions\SlotUnavailableException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\Collection;
 
@@ -31,6 +40,8 @@ final readonly class Cirrux
         private ConfiguredCalendars $configuredCalendars,
         private RefreshCalendar $refreshCalendar,
         private ForgetCalendar $forgetCalendar,
+        private BookSlot $bookSlot,
+        private CancelBooking $cancelBooking,
     ) {}
 
     /**
@@ -78,6 +89,33 @@ final readonly class Cirrux
             $this->container->make(SlotCalculator::class),
             $this->container->make(ReportStaleCalendar::class),
         );
+    }
+
+    /**
+     * Books one slot of a configured event type: the start is validated, the calendar is checked
+     * against Cirrux itself, the event is created (Cirrux mails the attendee) and the booking is stored.
+     *
+     * @throws InvalidConfigurationException for an unknown event type, an invalid one or one without a calendar
+     * @throws InvalidSlotException when the start is not a valid slot start of the event type
+     * @throws SlotUnavailableException when the calendar is busy at that time, or could not be locked in time
+     * @throws BookingVetoedException when a listener of BookingCreating holds the booking back
+     * @throws CirruxException when Cirrux refuses or cannot be reached
+     */
+    public function book(string $eventType, CarbonInterface $start, Attendee $attendee, ?string $notes = null): Booking
+    {
+        return $this->bookSlot->handle($eventType, $start, $attendee, $notes);
+    }
+
+    /**
+     * Cancels a booking, by the booking or its id: the event is deleted from the calendar and Cirrux
+     * mails the attendees. Cancelling a booking that is already cancelled does nothing.
+     *
+     * @throws BookingNotFoundException when no booking has that id
+     * @throws CirruxException when Cirrux refuses or cannot be reached
+     */
+    public function cancel(Booking|string $booking): void
+    {
+        $this->cancelBooking->handle($booking);
     }
 
     /**

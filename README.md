@@ -1,6 +1,6 @@
 # Laravel Cirrux Calendar
 
-A Laravel package for the calendar API of [Cirrux](https://cirrux.co): log in, read your calendars and create or delete events. Cached availability is in; booking, so people outside your company can book a demo straight into a Cirrux calendar, is in progress.
+A Laravel package for the calendar API of [Cirrux](https://cirrux.co): log in, read your calendars and create or delete events. Cached availability and booking are in, so people outside your company can book a demo straight into a Cirrux calendar.
 
 The package only gives you methods. It ships no routes and no UI: the booking page, forms and emails belong to your app.
 
@@ -22,7 +22,7 @@ The package only gives you methods. It ships no routes and no UI: the booking pa
 composer require cdsmths/laravel-cirrux-calendar
 ```
 
-Publish and run the migration. It creates the `cirrux_tokens` table, which stores the tokens with the refresh token encrypted.
+Publish and run the migrations. They create the `cirrux_tokens` table, which stores the tokens with the refresh token encrypted, and the `cirrux_bookings` table, which holds the bookings the package made.
 
 ```bash
 php artisan vendor:publish --tag=cirrux-migrations
@@ -139,7 +139,7 @@ $events = Cirrux::calendar($uuid)->events()->fresh()->between($from, $to)->get()
 
 The package keeps the events of the coming weeks in your cache, one entry per calendar per ISO week (UTC). Visitors only ever read from there, so the number of API calls does not depend on how many people open your page.
 
-- **Refreshed by a job, not by visitors.** `Cirrux::refresh()` fetches `[now - 2 days, now + cirrux.cache.weeks_ahead weeks)` in one go (following every page). It takes the calendar lock first; that lock coordinates refreshes (and, later, bookings) with each other. The write-through of creating and deleting events does not take it, so a refresh that runs at the same moment can overwrite a write-through, or the other way around. That lasts until the next successful refresh; if refreshing keeps failing, reads fail closed once the data is older than `max_staleness`. Booking will do a fresh check against Cirrux, so this cannot cause a double booking. Only when all pages arrived are the weeks replaced, so a failure halfway (a `429`, a `5xx`) leaves the old cache in place.
+- **Refreshed by a job, not by visitors.** `Cirrux::refresh()` fetches `[now - 2 days, now + cirrux.cache.weeks_ahead weeks)` in one go (following every page). It takes the calendar lock first; that lock coordinates refreshes and bookings with each other. The write-through of creating and deleting events does not take it, so a refresh that runs at the same moment can overwrite a write-through, or the other way around. That lasts until the next successful refresh; if refreshing keeps failing, reads fail closed once the data is older than `max_staleness`. Booking does a fresh check against Cirrux, so this cannot cause a double booking. Only when all pages arrived are the weeks replaced, so a failure halfway (a `429`, a `5xx`) leaves the old cache in place.
 - **Fail closed.** When the cache cannot vouch for a window, `get()` throws a `StaleCalendarException` instead of returning an empty list: the weeks were never fetched, have expired, are older than `cirrux.cache.max_staleness`, or the window lies outside the refreshed weeks. "No data" is never read as "no events".
 - **Write-through.** Creating or deleting an event through the package updates the cached week right away, so your own changes usually show up without waiting for the next refresh (see the race described above).
 - **Changes made in Cirrux itself show up after one poll.** An event you add, move or delete in Cirrux directly is only seen at the next refresh, so with a five minute schedule it can take up to five minutes.
@@ -186,6 +186,52 @@ The rules:
 >
 > `isFree()` is the opposite: unless the start is not a valid slot (then it returns `false` without a call), it asks Cirrux for fresh events and lets `CirruxRequestException` and `RateLimitedException` through. Don't call it from visitor pages.
 
+### Booking
+
+```php
+use Carbon\CarbonImmutable;
+use Codesmiths\CirruxCalendar\Data\Attendee;
+use Codesmiths\CirruxCalendar\Facades\Cirrux;
+
+$booking = Cirrux::book(
+    'demo',
+    CarbonImmutable::parse('2026-11-02 09:00', 'Europe/Amsterdam'),
+    new Attendee('jane@example.com', 'Jane'),
+    'Interested in the API', // optional notes, stored as the description of the event
+); // Booking
+
+Cirrux::cancel($booking);      // or Cirrux::cancel($booking->id)
+```
+
+`book()` does this, in order:
+
+1. **Validates the start** against the event type: on the grid, inside the working hours, far enough ahead, not too far ahead, not in the past and not in an ambiguous DST hour. A start that fails throws an `InvalidSlotException` whose `$reason` is a `SlotRejection` (`in_past`, `too_soon`, `too_far_ahead`, `off_grid`, `outside_hours` or `ambiguous_time`). Nothing is sent to Cirrux.
+2. **Takes the calendar lock** (the one refreshes use) and waits at most `cirrux.lock.timeout` seconds. When it cannot get it, it throws a `SlotUnavailableException` with reason `lock_timeout`.
+3. **Checks the calendar with Cirrux itself**, not the cache, with buffers included. When the time is taken it throws a `SlotUnavailableException` with reason `busy`. This check is what rules out a double booking, whatever the cache holds.
+4. **Dispatches `BookingCreating`.** A listener can hold the booking back by throwing a `BookingVetoedException`; nothing has been created at that point.
+5. **Creates the event** in Cirrux, with the attendee, and Cirrux mails the attendee an invitation.
+6. **Stores the booking** in `cirrux_bookings`, releases the lock and dispatches `BookingCreated`.
+
+If storing the booking fails (the database is down, say), the event is deleted from the calendar again and the original exception is thrown; a failure of that delete is reported with `report()` and does not hide the original one. If Cirrux creates the event but the answer never reaches you (a timeout), there is an event without a booking in Cirrux: the next refresh shows that time as busy.
+
+Every refusal dispatches `BookingRejected`, with the reason, after the lock is released.
+
+```php
+Event::listen(BookingCreating::class, function (BookingCreating $event): void {
+    if (isBlocked($event->attendee->email)) {
+        throw new BookingVetoedException('This address cannot book.');
+    }
+});
+```
+
+`cancel()` takes the same lock, deletes the event (Cirrux mails the attendees a cancellation; an event that is already gone counts as deleted), marks the booking as cancelled by the user and dispatches `BookingCancelled`. It is idempotent: a booking that is already cancelled does nothing and dispatches nothing. An unknown id throws a `BookingNotFoundException`. When deleting the event fails, the booking stays as it was. When the lock cannot be taken in time it throws a `CirruxRequestException`.
+
+`book()` calls Cirrux while it holds the lock, so don't call it where a request has to stay fast; run it in a controller action or a job.
+
+#### Reconciliation
+
+After every successful refresh the package compares the bookings in the refreshed window with the events Cirrux returned. A booking whose event is missing in two successive refreshes is marked as cancelled externally and `BookingCancelled` is dispatched with `CancelledBy::External`; one missing event is only noted, so a single incomplete answer cannot cancel your bookings. A booking whose event moved gets its new times and `BookingRescheduled` is dispatched. An event that is moved outside the refresh window (further than `weeks_ahead` weeks ahead) looks deleted and is treated like that after two refreshes.
+
 ### Scheduling
 
 The package schedules nothing by itself. Add the refresh to your scheduler, for example in `routes/console.php`:
@@ -219,6 +265,11 @@ The package dispatches its own events, so you can build on top of it without cha
 | `CalendarRefreshFailed` | The refresh failed; the previous cache normally stays in place, unless it was forgotten first (e.g. after deleting a recurring event), in which case reads stay fail closed | `calendarUuid`, `CirruxFailure` |
 | `CalendarStale` | Availability returned no slots because the cache cannot vouch for the requested window (see Availability); at most once per `max_staleness` per calendar | `calendarUuid`, `refreshedAt` (`null` when there is no usable refresh metadata) |
 | `RateLimited` | Cirrux answered `429` or the local limiter refused a request | `retryAfter` |
+| `BookingCreating` | A slot is valid and free and nothing has been written yet; throw a `BookingVetoedException` from a listener to refuse the booking | `eventType`, `Slot`, `Attendee`, `notes` |
+| `BookingCreated` | A booking was stored (after the database commit) | `Booking` |
+| `BookingRejected` | `book()` refused a booking | `eventType`, `start`, `Attendee`, `reason`: a `SlotRejection` value, `busy`, `lock_timeout` or `vetoed` |
+| `BookingCancelled` | A booking was cancelled, by `cancel()` or by reconciliation (after the database commit) | `Booking`, `CancelledBy` (`user` or `external`) |
+| `BookingRescheduled` | Reconciliation found that the event of a booking moved (after the database commit) | `Booking`, `previousStart`, `previousEnd` |
 
 All events live in `Codesmiths\CirruxCalendar\Events`. Their payloads are DTOs and scalars, so they are safe for queued listeners, and they never contain tokens. A failure travels as a `CirruxFailure` (exception class, message, status, retryAfter) and not as the exception itself, because an exception holds closures that PHP cannot serialize. Renaming or removing a payload field is a breaking change.
 
@@ -233,6 +284,10 @@ Everything the package throws extends `Codesmiths\CirruxCalendar\Exceptions\Cirr
 | `RateLimitedException` | Cirrux or the local limiter says to slow down; `$retryAfter` holds the seconds to wait |
 | `StaleCalendarException` | The week cache is missing, expired, older than `max_staleness` or does not cover the window; `$calendarUuid` holds the calendar |
 | `InvalidConfigurationException` | The `cirrux` config cannot be used; thrown when the app boots and names the key |
+| `InvalidSlotException` | The start is not a valid slot of the event type; `$reason` is a `SlotRejection` |
+| `SlotUnavailableException` | The slot was valid but could not be booked; `$reason` is `busy` or `lock_timeout` |
+| `BookingVetoedException` | Thrown by a `BookingCreating` listener to refuse a booking |
+| `BookingNotFoundException` | No booking has that id; `$bookingId` holds it |
 
 ### Replacing behaviour
 
@@ -248,7 +303,7 @@ $this->app->bind(\Codesmiths\CirruxCalendar\Actions\Events\CreateEvent::class, M
 | --- | --- |
 | 0.1 (this beta) | Device login, token refresh, calendars, reading, creating and deleting events |
 | this release | Week cache refreshed by a scheduled job, `cirrux:refresh`, write-through, fail closed when data is stale, config validation, availability: slots from working hours, buffers, minimum notice and time zones, including DST changes |
-| later | Booking and cancelling with a per-calendar lock, a fresh check before booking, a `cirrux_bookings` table and reconciliation |
+| this release | Booking and cancelling with a per-calendar lock, a fresh check before booking, a `cirrux_bookings` table and reconciliation |
 
 The full design is in [plan.md](plan.md) (in Dutch).
 

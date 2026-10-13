@@ -34,16 +34,23 @@ final readonly class DeleteEvent
      * the cache stays forgotten, so every read fails closed until the next refresh succeeds.
      * Anything else is removed from the buckets directly.
      *
+     * A caller that holds the calendar lock passes `$refreshSeries = false`: the refresh takes that
+     * same lock, which is not re-entrant. The calendar is still forgotten, the refresh is left out
+     * and `true` says it is needed; the caller refreshes after it released the lock. Otherwise the
+     * result is `false`.
+     *
      * The write-through takes no calendar lock: BookSlot (phase 5) holds that lock while it calls
      * this action, and Laravel locks are not re-entrant. A race with a running refresh can overwrite
      * a bucket, also for other events: the deleted event may stay in the cache, or an unrelated event
      * may drop out of it, until the next successful refresh (at the latest until `max_staleness`,
      * after which reads fail closed). The fresh check in book() prevents a double booking.
      *
+     * @return bool whether the calendar was forgotten and still has to be refreshed (only with `$refreshSeries = false`)
+     *
      * @throws CirruxRequestException for every failure except a 404
      * @throws RateLimitedException when the rate limit is reached
      */
-    public function handle(string $calendarUuid, string $eventId): void
+    public function handle(string $calendarUuid, string $eventId, bool $refreshSeries = true): bool
     {
         $cached = $this->cache->find($calendarUuid, $eventId);
 
@@ -57,19 +64,27 @@ final readonly class DeleteEvent
             throw $rateLimitedException;
         }
 
+        $needsRefresh = false;
+
         if ($cached instanceof CalendarEvent && ($cached->isRecurring || $cached->seriesId === $eventId)) {
-            $this->forgetAndRefresh($calendarUuid);
+            $this->forgetCalendar->handle($calendarUuid);
+
+            if ($refreshSeries) {
+                $this->refresh($calendarUuid);
+            } else {
+                $needsRefresh = true;
+            }
         } else {
             $this->cache->remove($calendarUuid, $eventId, $cached);
         }
 
         event(new CalendarEventDeleted($calendarUuid, $eventId));
+
+        return $needsRefresh;
     }
 
-    private function forgetAndRefresh(string $calendarUuid): void
+    private function refresh(string $calendarUuid): void
     {
-        $this->forgetCalendar->handle($calendarUuid);
-
         try {
             $this->refreshCalendar->handle($calendarUuid);
         } catch (CirruxException) {
