@@ -7,6 +7,7 @@ namespace Codesmiths\CirruxCalendar;
 use Codesmiths\CirruxCalendar\Actions\Auth\RefreshAccessToken;
 use Codesmiths\CirruxCalendar\Auth\DatabaseTokenStore;
 use Codesmiths\CirruxCalendar\Auth\TokenStore;
+use Codesmiths\CirruxCalendar\Calendars\CalendarList;
 use Codesmiths\CirruxCalendar\Http\CirruxConnector;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\LockProvider;
@@ -36,6 +37,10 @@ final class CirruxCalendarServiceProvider extends PackageServiceProvider
         $this->app->when(RefreshAccessToken::class)
             ->needs(LockProvider::class)
             ->give(fn (): LockProvider => $this->lockProvider());
+
+        $this->app->when(CalendarList::class)
+            ->needs(CacheRepository::class)
+            ->give(fn (): CacheRepository => $this->cache());
 
         $this->app->when(CirruxConnector::class)
             ->needs(RateLimitStore::class)
