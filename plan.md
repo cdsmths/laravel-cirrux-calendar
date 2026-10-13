@@ -280,7 +280,7 @@ Saloon v4 is pas kort uit; als plugins of docs achterlopen, is `^3.15` het terug
 - `CirruxAuthConnector` (basis `https://api.cirrux.co/`): de `api/auth/*`-requests. Dit is geen standaard OAuth2-server (JSON-bodies, eigen device flow), dus geen gebruik van Saloon's ingebouwde OAuth2-traits maar eigen requests.
 - `CirruxConnector` (basis `https://api.cirrux.co/public_api/v1`): de API zelf. `defaultAuth()` leest het access token **bij elke poging opnieuw** uit de `TokenStore` (niet in een property cachen), zodat een retry na een refresh het nieuwe token gebruikt.
 
-**Retries:** `$tries = 2` op de connector, maar `handleRetry()` geeft alleen `true` terug bij een `401`. Dan ververst hij het token via de `TokenRefresher`; bij alle andere statussen geeft hij `false`. Write-requests (create/delete) hebben `$tries = 1`: een POST die wel aankwam maar met een 5xx antwoordde, mag geen dubbel event opleveren.
+**Retries:** `$tries = 2` op de connector, maar `handleRetry()` geeft alleen `true` terug bij een `401`. Dan ververst hij het token via de Action `RefreshAccessToken`; bij alle andere statussen geeft hij `false`. Write-requests (create/delete) hebben `$tries = 1`: een POST die wel aankwam maar met een 5xx antwoordde, mag geen dubbel event opleveren.
 
 **Exceptions naar buiten:** `RateLimitedException`, `CirruxAuthException`, `CirruxRequestException`, `SlotUnavailableException`, `InvalidSlotException`. Ze erven allemaal van `CirruxException`.
 
@@ -300,16 +300,17 @@ src/
       Auth/                     // DeviceAuthorization, DeviceToken, RefreshToken
       Calendars/                // ListCalendars
       Events/                   // ListEvents (paginated), CreateEvent, DeleteEvent
-  Auth/DeviceFlow.php
-  Auth/TokenRefresher.php       // lock + double-check + refresh + atomair opslaan
+  Actions/                      // alle handelingen met bijwerkingen, zie "Actions"
+    Auth/                       // StartDeviceLogin, CompleteDeviceLogin, RefreshAccessToken, Logout
+    Events/                     // CreateEvent, DeleteEvent
+    Cache/                      // RefreshCalendar, ForgetCalendar
+    Booking/                    // BookSlot, CancelBooking, ReconcileBookings
   Auth/TokenStore.php           // contract + DatabaseTokenStore
   Calendars/CalendarResource.php
-  Calendars/EventQuery.php
-  Calendars/EventCache.php      // weekbuckets, refreshed_at, write-through, fail closed
+  Calendars/EventQuery.php      // lezen (uit cache of fresh)
+  Calendars/EventCache.php      // weekbuckets, refreshed_at, merge, fail closed
   Availability/Availability.php // fluent API bovenop de calculator
   Availability/SlotCalculator.php // puur: werktijden + regels + events → slots
-  Booking/Booker.php            // valideren → lock → verse check → create → opslaan → cache bijwerken
-  Booking/Reconciler.php        // extern verwijderde boekingen detecteren tijdens refresh
   Data/                         // DTO's
   Events/                       // BookingCreated, BookingCancelled, TokenRefreshFailed, CalendarStale
   Exceptions/                   // CirruxException + subclasses
@@ -318,7 +319,32 @@ database/migrations/            // cirrux_tokens, cirrux_bookings
 config/cirrux.php
 ```
 
-`Booker` en `TokenRefresher` krijgen de lock via Laravel's `LockProvider`-contract geïnjecteerd en de tokens via het `TokenStore`-contract. Zo kunnen tests races simuleren.
+`BookSlot`, `RefreshCalendar` en `RefreshAccessToken` krijgen de lock via Laravel's `LockProvider`-contract geïnjecteerd en de tokens via het `TokenStore`-contract. Zo kunnen tests races simuleren.
+
+### Actions
+
+Elke handeling met bijwerkingen is een eigen Action-class onder `src/Actions/`, zonder extra dependency (geen `lorisleiva/laravel-actions`). De facade, de commands en de connector doen zelf niets; ze roepen alleen Actions aan.
+
+| Action | Doet | Aangeroepen door |
+| --- | --- | --- |
+| `Auth\StartDeviceLogin` | `device_authorization` → `DeviceCode` (url, user code, interval) | `cirrux:login` |
+| `Auth\CompleteDeviceLogin` | pollt `device_token` tot akkoord, slaat tokens op | `cirrux:login` |
+| `Auth\RefreshAccessToken` | lock → store herlezen → refresh → atomair opslaan | connector (proactief en bij `401`) |
+| `Auth\Logout` | tokens verwijderen | `cirrux:logout` |
+| `Events\CreateEvent` | event aanmaken + write-through | `CalendarResource`, `BookSlot` |
+| `Events\DeleteEvent` | event verwijderen (404 = ok) + write-through | `CalendarResource`, `CancelBooking` |
+| `Cache\RefreshCalendar` | lock → alle pagina's ophalen → `putMany` → `refreshed_at` | `Cirrux::refresh()`, `cirrux:refresh` |
+| `Cache\ForgetCalendar` | buckets en `refreshed_at` wissen | `Cirrux::forget()` |
+| `Booking\BookSlot` | valideren → lock → verse check → `CreateEvent` → `cirrux_bookings` → `BookingCreated` | `Cirrux::book()` |
+| `Booking\CancelBooking` | `DeleteEvent` → status `cancelled` → `BookingCancelled` | `Cirrux::cancel()` |
+| `Booking\ReconcileBookings` | extern verwijderde of verschoven boekingen bijwerken | `RefreshCalendar` |
+
+Conventies:
+
+- `final readonly class`, afhankelijkheden via de constructor, één publieke methode `handle()` met getypeerde parameters en return type.
+- Lezen (`EventQuery`, `Availability`, `SlotCalculator`) zijn géén Actions: die hebben geen bijwerkingen en blijven fluent.
+- Actions worden uit de container geresolved. Een app kan er dus één vervangen met `$this->app->bind(BookSlot::class, …)`, bijvoorbeeld om extra validatie toe te voegen, zonder het package te forken.
+- Actions roepen elkaar aan via constructor-injectie (`BookSlot` gebruikt `CreateEvent`), niet via de facade.
 
 `cirrux_bookings` houdt de koppeling bij tussen een boeking (eigen id) en het Cirrux-event-id, zodat de app die erbovenop bouwt nooit met Cirrux-ids hoeft te werken. Kolommen o.a. `status` (`confirmed`/`cancelled`), `cancelled_at` en `cancelled_by` (`user`/`external`).
 
@@ -333,6 +359,8 @@ config/cirrux.php
   - geen `dd`, `dump`, `ray` of `env()` buiten `config/`
   - DTO's zijn `readonly`
   - exceptions erven van een gedeelde `CirruxException`
+  - classes in `Actions` zijn `final` en `readonly` en hebben een publieke `handle()`-methode
+  - `Facades`, `Commands` en `Http` gebruiken geen `Cache`, `DB` of connectors rechtstreeks voor schrijfacties, maar Actions
 - **Type coverage:** `pest --type-coverage --min=100` (dev-dependency `pestphp/pest-plugin-type-coverage`). Elke parameter, property en return type expliciet getypeerd; generics via PHPDoc (`Collection<int, Event>`).
 - **Statische analyse:** Larastan op level `max`, zonder baseline.
 - **Coverage:** minimaal 90% code coverage (`pest --coverage --min=90`).
@@ -341,16 +369,16 @@ config/cirrux.php
 
 ## Fasering
 
-1. **Fundament** — package-skelet (spatie/laravel-package-tools), Pint, Pest, Larastan, type coverage en CI vanaf de eerste commit, config + validatie, Saloon-connectors, `DatabaseTokenStore`, `TokenRefresher`, `cirrux:login` (device flow), `cirrux:calendars`. Doel: met eigen account agenda's kunnen ophalen.
-2. **Events** — `EventQuery`, DTO's (UTC-normalisatie, `seriesId`), create/delete, paginering, contract-tests die open punt 3 beantwoorden.
-3. **Caching** — `EventCache`, `cirrux:refresh`, write-through, fail closed, rate limiting en 429-afhandeling via de rate-limit-plugin.
+1. **Fundament** — package-skelet (spatie/laravel-package-tools), Pint, Pest, Larastan, type coverage en CI vanaf de eerste commit, config + validatie, Saloon-connectors, `DatabaseTokenStore`, de auth-Actions, `cirrux:login` (device flow), `cirrux:calendars`. Doel: met eigen account agenda's kunnen ophalen.
+2. **Events** — `EventQuery`, DTO's (UTC-normalisatie, `seriesId`), `CreateEvent`/`DeleteEvent`, paginering, contract-tests die open punt 3 beantwoorden.
+3. **Caching** — `EventCache`, `RefreshCalendar`/`ForgetCalendar`, `cirrux:refresh`, write-through, fail closed, rate limiting en 429-afhandeling via de rate-limit-plugin.
 4. **Beschikbaarheid** — `SlotCalculator` incl. buffers, min notice, tijdzones, zomertijd-overgangen.
-5. **Boeken** — `book()`/`cancel()`, validatie, agenda-lock + verse check, `cirrux_bookings`, reconciliatie, Laravel-events.
+5. **Boeken** — `BookSlot`/`CancelBooking`/`ReconcileBookings`, validatie, agenda-lock + verse check, `cirrux_bookings`, reconciliatie, Laravel-events.
 
 ## Testen
 
 - Unit: `SlotCalculator` als pure functie met `Carbon::setTestNow` — werktijden, buffers, overlappende events, transparante events, all-day events, events die vóór het venster beginnen, DST-wissel (25 okt 2026, 29 mrt 2026, en een slot precies op de overgang).
-- Unit: `book()`-validatie (buiten raster, buiten werktijden, binnen min notice, voorbij max days, verleden).
+- Unit: `BookSlot`-validatie (buiten raster, buiten werktijden, binnen min notice, voorbij max days, verleden).
 - Feature: Saloon `MockClient` met fixtures per request (geen echte HTTP-calls); `assertSent()`/`assertSentCount()` voor:
   - refresh bij een `401`, en geen retry bij andere statussen
   - double-checked refresh: een store die tussen het nemen van de lock en het verversen al ververst is, leidt niet tot een tweede refresh
