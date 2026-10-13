@@ -90,13 +90,21 @@ it('serializes the cache event payloads for queued listeners', function (): void
     $from = CarbonImmutable::parse('2026-10-26T00:00:00Z');
     $to = CarbonImmutable::parse('2026-11-23T00:00:00Z');
 
-    $refreshed = unserialize(serialize(new CalendarRefreshed('cal-1', $from, $to, 12, 2)));
-    $calendarFailed = unserialize(serialize(new CalendarRefreshFailed('cal-1', CirruxFailure::from(thrownFromClosure(new RateLimitedException(42))))));
-    $tokenFailed = unserialize(serialize(new TokenRefreshFailed(CirruxFailure::from(thrownFromClosure(new CirruxAuthException('Cirrux rejected the refresh token (HTTP 401).'))))));
-    $limited = unserialize(serialize(new RateLimited(42)));
+    // Keep call arguments in stack traces, as a development setup does; with
+    // zend.exception_ignore_args on (production default) the closure would not be in the trace.
+    $ignoreArgs = ini_set('zend.exception_ignore_args', '0');
 
-    // The reason the events carry a CirruxFailure: the exception itself cannot be serialized.
-    expect(fn (): string => serialize(thrownFromClosure(new CirruxAuthException('Nope.'))))->toThrow(Exception::class, 'Closure');
+    try {
+        $refreshed = unserialize(serialize(new CalendarRefreshed('cal-1', $from, $to, 12, 2)));
+        $calendarFailed = unserialize(serialize(new CalendarRefreshFailed('cal-1', CirruxFailure::from(thrownFromClosure(new RateLimitedException(42))))));
+        $tokenFailed = unserialize(serialize(new TokenRefreshFailed(CirruxFailure::from(thrownFromClosure(new CirruxAuthException('Cirrux rejected the refresh token (HTTP 401).'))))));
+        $limited = unserialize(serialize(new RateLimited(42)));
+
+        // The reason the events carry a CirruxFailure: the exception itself cannot be serialized.
+        expect(fn (): string => serialize(thrownFromClosure(new CirruxAuthException('Nope.'))))->toThrow(Exception::class, 'Closure');
+    } finally {
+        ini_set('zend.exception_ignore_args', $ignoreArgs === false ? '0' : $ignoreArgs);
+    }
 
     expect($refreshed)->toBeInstanceOf(CalendarRefreshed::class)
         ->and($refreshed->from->equalTo($from))->toBeTrue()
