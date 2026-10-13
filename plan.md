@@ -417,7 +417,7 @@ We volgen de code-patronen en tooling van Nuno Maduro, zoals in [`nunomaduro/lar
 
 | Tool | Configuratie |
 | --- | --- |
-| **Pint** | `laravel`-preset plus Nuno's strikte regels: `declare_strict_types`, `final_class`, `date_time_immutable`, `strict_comparison`, `global_namespace_import`, `mb_str_functions`, `ordered_class_elements`, `protected_to_private`, `no_useless_else`, `no_superfluous_elseif`, enz. |
+| **Pint** | `laravel`-preset plus Nuno's strikte regels: `declare_strict_types`, `final_class`, `date_time_immutable`, `strict_comparison`, `global_namespace_import`, `ordered_class_elements`, `protected_to_private`, `no_useless_else`, `no_superfluous_elseif`, enz. Níet `mb_str_functions`: op PHP 8.4+ maakt die van `rtrim` `mb_rtrim`, dat op 8.3 niet bestaat. |
 | **Rector** | `rector/rector` + `driftingly/rector-laravel` met de Laravel-sets (code quality, collection, facade aliases, if-helpers), `withPreparedSets(deadCode, codeQuality, typeDeclarations, privatization, earlyReturn, codingStyle)` en `withPhpSets()`, die het PHP-niveau uit `composer.json` (8.3) haalt. |
 | **Larastan** | level `max`, `bleedingEdge`, de Carbon-extensie, geen baseline. |
 | **Pest** | v5, met `pest-plugin-laravel` en `pest-plugin-type-coverage`. |
