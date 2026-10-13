@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Codesmiths\CirruxCalendar\Data\Transparency;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxException;
 use Codesmiths\CirruxCalendar\Http\CirruxAuthConnector;
 use Codesmiths\CirruxCalendar\Http\CirruxConnector;
@@ -37,9 +38,11 @@ arch('env() is only used in config')
     ->expect('env')
     ->not->toBeUsed();
 
+// An enum is already immutable and cannot be declared readonly.
 arch('data objects are readonly')
     ->expect('Codesmiths\CirruxCalendar\Data')
-    ->toBeReadonly();
+    ->toBeReadonly()
+    ->ignoring(Transparency::class);
 
 arch('actions are readonly and have a handle method')
     ->expect('Codesmiths\CirruxCalendar\Actions')

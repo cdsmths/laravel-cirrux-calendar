@@ -9,6 +9,7 @@ use Codesmiths\CirruxCalendar\Auth\TokenStore;
 use Codesmiths\CirruxCalendar\Data\Tokens;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxRequestException;
 use Codesmiths\CirruxCalendar\Exceptions\RateLimitedException;
+use Codesmiths\CirruxCalendar\Http\Requests\Events\EventsPaginator;
 use Illuminate\Support\Facades\Config;
 use Saloon\Contracts\Authenticator;
 use Saloon\Exceptions\Request\FatalRequestException;
@@ -18,6 +19,7 @@ use Saloon\Http\Connector;
 use Saloon\Http\Faking\MockClient;
 use Saloon\Http\Request;
 use Saloon\Http\Response;
+use Saloon\PaginationPlugin\Contracts\HasPagination;
 use Saloon\RateLimitPlugin\Contracts\RateLimitStore;
 use Saloon\RateLimitPlugin\Exceptions\RateLimitReachedException;
 use Saloon\RateLimitPlugin\Limit;
@@ -28,7 +30,7 @@ use Throwable;
 /**
  * The Cirrux public API. Failures leave this class as Cirrux exceptions.
  */
-final class CirruxConnector extends Connector
+final class CirruxConnector extends Connector implements HasPagination
 {
     use AcceptsJson;
     use HasRateLimits;
@@ -47,6 +49,11 @@ final class CirruxConnector extends Connector
     public function resolveBaseUrl(): string
     {
         return rtrim(Config::string('cirrux.base_url'), '/').'/public_api/v1';
+    }
+
+    public function paginate(Request $request): EventsPaginator
+    {
+        return new EventsPaginator($this, $request);
     }
 
     /**
