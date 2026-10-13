@@ -7,12 +7,10 @@ namespace Codesmiths\CirruxCalendar\Commands;
 use Codesmiths\CirruxCalendar\Actions\Auth\CompleteDeviceLogin;
 use Codesmiths\CirruxCalendar\Actions\Auth\StartDeviceLogin;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxException;
-use Illuminate\Console\Attributes\Description;
-use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Attribute\AsCommand;
 
-#[Description('Log in to Cirrux with the device flow')]
-#[Signature('cirrux:login')]
+#[AsCommand(name: 'cirrux:login', description: 'Log in to Cirrux with the device flow')]
 final class LoginCommand extends Command
 {
     public function handle(StartDeviceLogin $start, CompleteDeviceLogin $complete): int
