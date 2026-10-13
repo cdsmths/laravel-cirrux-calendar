@@ -1,0 +1,93 @@
+{
+    "name": "cdsmths/laravel-cirrux-calendar",
+    "description": "Experimental Laravel package for the Cirrux calendar API: cached availability, booking and cancelling.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "cirrux",
+        "calendar",
+        "booking",
+        "availability",
+        "saloon",
+        "experimental"
+    ],
+    "authors": [
+        {
+            "name": "Codesmiths",
+            "email": "thomas@trivle.com"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "illuminate/contracts": "^12.39 || ^13.0",
+        "illuminate/support": "^12.39 || ^13.0",
+        "saloonphp/laravel-plugin": "^5.0",
+        "saloonphp/pagination-plugin": "^2.3",
+        "saloonphp/rate-limit-plugin": "^2.5",
+        "saloonphp/saloon": "^4.5",
+        "spatie/laravel-package-tools": "^1.93"
+    },
+    "require-dev": {
+        "driftingly/rector-laravel": "^2.6",
+        "larastan/larastan": "^3.13",
+        "laravel/pint": "^1.32",
+        "orchestra/testbench": "^10.0 || ^11.0",
+        "pestphp/pest": "^4.0 || ^5.0",
+        "pestphp/pest-plugin-laravel": "^4.0 || ^5.0",
+        "pestphp/pest-plugin-type-coverage": "^4.0 || ^5.0",
+        "rector/rector": "^2.7",
+        "roave/security-advisories": "dev-latest"
+    },
+    "autoload": {
+        "psr-4": {
+            "Codesmiths\\CirruxCalendar\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Codesmiths\\CirruxCalendar\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "lint": [
+            "rector",
+            "pint --parallel"
+        ],
+        "test:lint": [
+            "pint --parallel --test",
+            "rector --dry-run"
+        ],
+        "test:types": "phpstan",
+        "test:type-coverage": "pest --type-coverage --min=100",
+        "test:unit": "XDEBUG_MODE=coverage pest --parallel --coverage --exactly=100.0",
+        "test:contract": "pest --testsuite=Contract",
+        "test": [
+            "@test:lint",
+            "@test:types",
+            "@test:type-coverage",
+            "@test:unit"
+        ]
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Codesmiths\\CirruxCalendar\\CirruxCalendarServiceProvider"
+            ],
+            "aliases": {
+                "Cirrux": "Codesmiths\\CirruxCalendar\\Facades\\Cirrux"
+            }
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true,
+            "phpstan/extension-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
