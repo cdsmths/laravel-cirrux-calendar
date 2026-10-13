@@ -254,7 +254,7 @@ Issues and pull requests are welcome. Before you open a pull request:
 
 ## Security
 
-Please don't report security issues in public issues. Email thomas@trivle.com instead.
+Please don't report security issues in public issues. Email thomas@codesmiths.nl instead.
 
 ## License
 
