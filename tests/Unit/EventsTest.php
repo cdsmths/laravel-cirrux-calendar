@@ -4,9 +4,18 @@ declare(strict_types=1);
 
 use Carbon\CarbonImmutable;
 use Codesmiths\CirruxCalendar\Data\Attendee;
+use Codesmiths\CirruxCalendar\Data\Booking;
+use Codesmiths\CirruxCalendar\Data\BookingStatus;
 use Codesmiths\CirruxCalendar\Data\CalendarEvent;
+use Codesmiths\CirruxCalendar\Data\CancelledBy;
 use Codesmiths\CirruxCalendar\Data\CirruxFailure;
+use Codesmiths\CirruxCalendar\Data\Slot;
 use Codesmiths\CirruxCalendar\Data\Transparency;
+use Codesmiths\CirruxCalendar\Events\BookingCancelled;
+use Codesmiths\CirruxCalendar\Events\BookingCreated;
+use Codesmiths\CirruxCalendar\Events\BookingCreating;
+use Codesmiths\CirruxCalendar\Events\BookingRejected;
+use Codesmiths\CirruxCalendar\Events\BookingRescheduled;
 use Codesmiths\CirruxCalendar\Events\CalendarEventCreated;
 use Codesmiths\CirruxCalendar\Events\CalendarEventDeleted;
 use Codesmiths\CirruxCalendar\Events\CalendarRefreshed;
@@ -21,6 +30,7 @@ use Codesmiths\CirruxCalendar\Exceptions\CirruxAuthException;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxException;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxRequestException;
 use Codesmiths\CirruxCalendar\Exceptions\RateLimitedException;
+use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 use Illuminate\Support\Facades\Event;
 
 /**
@@ -137,6 +147,62 @@ it('dispatches and serializes CalendarStale, with or without a refresh time', fu
         ->and($never)->toBeInstanceOf(CalendarStale::class)
         ->and($never->calendarUuid)->toBe('cal-2')
         ->and($never->refreshedAt)->toBeNull();
+});
+
+function eventsTestBooking(): Booking
+{
+    return new Booking(
+        'bk-1',
+        'cal-1',
+        'evt-1',
+        'demo',
+        CarbonImmutable::parse('2026-10-20T08:00:00Z'),
+        CarbonImmutable::parse('2026-10-20T08:30:00Z'),
+        new Attendee('jan@example.com', 'Jan'),
+        null,
+        BookingStatus::Cancelled,
+        CancelledBy::External,
+        CarbonImmutable::parse('2026-10-19T08:00:00Z'),
+    );
+}
+
+it('dispatches and serializes the booking events', function (): void {
+    $booking = eventsTestBooking();
+    $attendee = new Attendee('jan@example.com', 'Jan');
+    $slot = new Slot($booking->start, $booking->end);
+
+    $events = [
+        new BookingCreating('demo', $slot, $attendee, 'Hi'),
+        new BookingCreated($booking),
+        new BookingRejected('demo', $booking->start, $attendee, 'busy'),
+        new BookingCancelled($booking, CancelledBy::External),
+        new BookingRescheduled($booking, $booking->start->subDay(), $booking->end->subDay()),
+    ];
+
+    Event::fake();
+
+    foreach ($events as $event) {
+        event($event);
+        Event::assertDispatched($event::class);
+    }
+
+    foreach ($events as $event) {
+        expect(unserialize(serialize($event)))->toEqual($event);
+    }
+});
+
+it('dispatches only the committed booking events after commit', function (): void {
+    expect(new BookingCreated(eventsTestBooking()))->toBeInstanceOf(ShouldDispatchAfterCommit::class)
+        ->and(new BookingCancelled(eventsTestBooking(), CancelledBy::User))->toBeInstanceOf(ShouldDispatchAfterCommit::class)
+        ->and(new BookingRescheduled(eventsTestBooking(), CarbonImmutable::now(), CarbonImmutable::now()))->toBeInstanceOf(ShouldDispatchAfterCommit::class)
+        ->and(new BookingCreating('demo', new Slot(CarbonImmutable::now(), CarbonImmutable::now()), new Attendee('a@b.nl'), null))->not->toBeInstanceOf(ShouldDispatchAfterCommit::class)
+        ->and(new BookingRejected('demo', CarbonImmutable::now(), new Attendee('a@b.nl'), 'vetoed'))->not->toBeInstanceOf(ShouldDispatchAfterCommit::class);
+});
+
+it('keeps tokens out of the booking event payloads', function (): void {
+    $serialized = serialize(new BookingCreated(eventsTestBooking()));
+
+    expect($serialized)->not->toContain('token')->not->toContain('Token');
 });
 
 it('serializes the calendar event payloads for queued listeners', function (): void {

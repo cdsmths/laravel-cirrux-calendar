@@ -2,10 +2,13 @@
 
 declare(strict_types=1);
 
+use Codesmiths\CirruxCalendar\Data\BookingStatus;
+use Codesmiths\CirruxCalendar\Data\CancelledBy;
 use Codesmiths\CirruxCalendar\Data\Transparency;
 use Codesmiths\CirruxCalendar\Exceptions\CirruxException;
 use Codesmiths\CirruxCalendar\Http\CirruxAuthConnector;
 use Codesmiths\CirruxCalendar\Http\CirruxConnector;
+use Codesmiths\CirruxCalendar\Models\BookingRecord;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -15,13 +18,26 @@ use Saloon\Http\Connector;
 arch()->preset()->php();
 
 // Saloon defines its hooks as protected methods, so the Http layer may use them,
-// and Laravel facades must define a protected getFacadeAccessor().
+// Laravel facades must define a protected getFacadeAccessor(), and Eloquent models a protected casts().
 // CirruxException is the abstract base class that all other exceptions extend.
 arch()->preset()->strict()->ignoring([
     'Codesmiths\CirruxCalendar\Http',
     'Codesmiths\CirruxCalendar\Facades',
+    BookingRecord::class,
     CirruxException::class,
 ]);
+
+it('lets the booking record have casts() as its only protected method', function (): void {
+    $class = new ReflectionClass(BookingRecord::class);
+
+    // Only methods written in the class file: those of Eloquent and of its traits are not ours to police.
+    $own = array_filter(
+        $class->getMethods(ReflectionMethod::IS_PROTECTED),
+        static fn (ReflectionMethod $method): bool => $method->getFileName() === $class->getFileName(),
+    );
+
+    expect(array_values(array_map(static fn (ReflectionMethod $method): string => $method->getName(), $own)))->toBe(['casts']);
+});
 
 // The laravel preset only inspects the app's `App\` namespace, which a package
 // does not have. laravel/pint registers its own `App\` namespace in vendor, so
@@ -42,7 +58,7 @@ arch('env() is only used in config')
 arch('data objects are readonly')
     ->expect('Codesmiths\CirruxCalendar\Data')
     ->toBeReadonly()
-    ->ignoring(Transparency::class);
+    ->ignoring([Transparency::class, BookingStatus::class, CancelledBy::class]);
 
 arch('actions are readonly and have a handle method')
     ->expect('Codesmiths\CirruxCalendar\Actions')
