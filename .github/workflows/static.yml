@@ -21,7 +21,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.5'
+          # Lowest supported PHP: Pint's mb_str_functions rewrites rtrim() to
+          # mb_rtrim() on PHP 8.4+, which does not exist on PHP 8.3.
+          php-version: '8.3'
           coverage: none
           tools: composer:v2
       - name: Install dependencies
