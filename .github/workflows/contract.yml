@@ -1,0 +1,51 @@
+name: Contract
+
+# Opt-in checks against a real Cirrux test calendar. A failure here means the
+# undocumented Cirrux API changed. Skipped (not failed) without credentials.
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Cirrux contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CIRRUX_BASE_URL: ${{ secrets.CIRRUX_BASE_URL }}
+      CIRRUX_CLIENT_ID: ${{ secrets.CIRRUX_CLIENT_ID }}
+      CIRRUX_ACCESS_TOKEN: ${{ secrets.CIRRUX_ACCESS_TOKEN }}
+      CIRRUX_REFRESH_TOKEN: ${{ secrets.CIRRUX_REFRESH_TOKEN }}
+      CIRRUX_TEST_CALENDAR: ${{ secrets.CIRRUX_TEST_CALENDAR }}
+    steps:
+      - name: Check credentials
+        id: credentials
+        run: |
+          if [ -z "$CIRRUX_REFRESH_TOKEN" ] || [ -z "$CIRRUX_TEST_CALENDAR" ]; then
+            echo "CIRRUX_* secrets are not configured; skipping contract tests."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.credentials.outputs.available == 'true'
+
+      - uses: shivammathur/setup-php@v2
+        if: steps.credentials.outputs.available == 'true'
+        with:
+          php-version: '8.5'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        if: steps.credentials.outputs.available == 'true'
+        run: composer update --prefer-stable --prefer-dist --no-interaction --no-progress
+
+      - name: Run contract tests
+        if: steps.credentials.outputs.available == 'true'
+        run: composer test:contract
