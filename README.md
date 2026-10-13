@@ -46,9 +46,16 @@ CIRRUX_CLIENT_ID=cirrux-cli   # see the note below
 | --- | --- | --- |
 | `cirrux.base_url` | `https://api.cirrux.co/` | API host |
 | `cirrux.client_id` | `cirrux-cli` | OAuth client used for the device flow |
-| `cirrux.cache.store` | default store | Cache store for the calendar list, locks and the rate limiter |
+| `cirrux.cache.store` | default store | Cache store for the week cache, the calendar list, locks and the rate limiter |
+| `cirrux.cache.ttl` | `86400` | Seconds cached events are kept as "last known good"; at least `max_staleness` |
+| `cirrux.cache.max_staleness` | `7200` | Seconds after a refresh that cached events are still trusted; older data is not served |
+| `cirrux.cache.weeks_ahead` | `4` | Weeks a refresh fetches, counting from the current ISO week |
 | `cirrux.cache.calendars_ttl` | `86400` | Seconds the calendar list stays cached |
+| `cirrux.lock.timeout` | `10` | Seconds to wait for the lock of a calendar |
 | `cirrux.rate_limit.per_minute` | `60` | Local limit, well below the 600/min that Cirrux allows per token |
+| `cirrux.event_types.*.calendar` | none | UUID of the calendar that an event type uses; `cirrux:refresh` refreshes every calendar named here |
+
+The package checks this config when your app boots and throws an `InvalidConfigurationException` that names the key. It rejects numbers that are out of range, a `ttl` below `max_staleness`, an unknown time zone, a `max_days_ahead` beyond `weeks_ahead * 7`, malformed working hours and, outside the `testing` environment, a cache store on the `array` or `null` driver (locks do not work between processes there).
 
 > [!NOTE]
 > Cirrux has no way to register your own OAuth client yet, so the package defaults to the client id of the Cirrux CLI. That is fine for your own account. We have asked Cirrux for an official route for third-party apps.
@@ -120,7 +127,47 @@ Good to know:
 - **Writes are sent once.** Creating and deleting are never retried, so a request that did reach Cirrux cannot create a second event.
 
 > [!IMPORTANT]
-> Every event read goes to the Cirrux API in this beta. Don't call `events()->get()` from pages that visitors open. The week cache arrives in the next release; `fresh()` will then be the way to skip it.
+> `get()` reads from the week cache and never calls Cirrux, so it is safe on pages that visitors open. `fresh()` skips the cache and goes to the API: don't use it on visitor paths.
+
+```php
+$events = Cirrux::calendar($uuid)->events()->fresh()->between($from, $to)->get(); // asks Cirrux
+```
+
+### Caching
+
+The package keeps the events of the coming weeks in your cache, one entry per calendar per ISO week (UTC). Visitors only ever read from there, so the number of API calls does not depend on how many people open your page.
+
+- **Refreshed by a job, not by visitors.** `Cirrux::refresh()` fetches the weeks from the current ISO week up to `cirrux.cache.weeks_ahead` in one go (following every page). It takes the calendar lock first; that lock coordinates refreshes (and, later, bookings) with each other. The write-through of creating and deleting events does not take it, so a refresh that runs at the same moment can overwrite a write-through, or the other way around. That lasts until the next successful refresh; if refreshing keeps failing, reads fail closed once the data is older than `max_staleness`. Booking will do a fresh check against Cirrux, so this cannot cause a double booking. Only when all pages arrived are the weeks replaced, so a failure halfway (a `429`, a `5xx`) leaves the old cache in place.
+- **Fail closed.** When the cache cannot vouch for a window, `get()` throws a `StaleCalendarException` instead of returning an empty list: the weeks were never fetched, have expired, are older than `cirrux.cache.max_staleness`, or the window lies outside the refreshed weeks. "No data" is never read as "no events".
+- **Write-through.** Creating or deleting an event through the package updates the cached week right away, so your own changes usually show up without waiting for the next refresh (see the race described above).
+- **Changes made in Cirrux itself show up after one poll.** An event you add, move or delete in Cirrux directly is only seen at the next refresh, so with a five minute schedule it can take up to five minutes.
+- **A shared, lock-capable store.** The week cache, the locks and the rate limiter use `cirrux.cache.store`. It must support atomic locks and be shared between your web workers and the scheduler (Redis, database, Memcached or DynamoDB).
+
+```php
+Cirrux::refresh();            // every calendar named in cirrux.event_types
+Cirrux::refresh($uuid);       // one calendar
+Cirrux::forget();             // empty the cache of every configured calendar
+Cirrux::forget($uuid);        // empty the cache of one calendar; reads fail closed until the next refresh
+```
+
+Without an argument `refresh()` tries every configured calendar and then throws the first `CirruxException` it caught. The failure events are dispatched for each calendar that failed.
+
+### Scheduling
+
+The package schedules nothing by itself. Add the refresh to your scheduler, for example in `routes/console.php`:
+
+```php
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('cirrux:refresh')->everyFiveMinutes()->withoutOverlapping();
+```
+
+```bash
+php artisan cirrux:refresh            # every calendar named in cirrux.event_types
+php artisan cirrux:refresh <uuid>     # one calendar
+```
+
+The command prints one line per calendar and exits with a failure code when any of them could not be refreshed. Without configured calendars it warns and succeeds.
 
 ### Laravel events
 
@@ -131,11 +178,14 @@ The package dispatches its own events, so you can build on top of it without cha
 | `LoggedIn` | `cirrux:login` succeeded | `expiresAt` |
 | `LoggedOut` | `cirrux:logout` | — |
 | `TokenRefreshed` | The access token was refreshed | `expiresAt` |
-| `TokenRefreshFailed` | Refreshing failed for good; someone must run `cirrux:login` | `CirruxAuthException` |
+| `TokenRefreshFailed` | Refreshing failed for good; someone must run `cirrux:login` | `CirruxFailure` |
 | `CalendarEventCreated` | An event was created through the package | `calendarUuid`, `CalendarEvent` |
 | `CalendarEventDeleted` | An event was deleted through the package (also when it was already gone) | `calendarUuid`, `eventId` |
+| `CalendarRefreshed` | A calendar was refreshed | `calendarUuid`, `from`, `to`, `eventCount`, `apiCalls` |
+| `CalendarRefreshFailed` | The refresh failed; the previous cache normally stays in place, unless it was forgotten first (e.g. after deleting a recurring event), in which case reads stay fail closed | `calendarUuid`, `CirruxFailure` |
+| `RateLimited` | Cirrux answered `429` or the local limiter refused a request | `retryAfter` |
 
-All events live in `Codesmiths\CirruxCalendar\Events`. Their payloads are DTOs and scalars, so they are safe for queued listeners, and they never contain tokens. Renaming or removing a payload field is a breaking change.
+All events live in `Codesmiths\CirruxCalendar\Events`. Their payloads are DTOs and scalars, so they are safe for queued listeners, and they never contain tokens. A failure travels as a `CirruxFailure` (exception class, message, status, retryAfter) and not as the exception itself, because an exception holds closures that PHP cannot serialize. Renaming or removing a payload field is a breaking change.
 
 ### Exceptions
 
@@ -146,6 +196,8 @@ Everything the package throws extends `Codesmiths\CirruxCalendar\Exceptions\Cirr
 | `CirruxAuthException` | Not logged in, or the tokens can no longer be refreshed |
 | `CirruxRequestException` | Cirrux refused the request or could not be reached; `status()` returns the HTTP status (0 when no response came back) |
 | `RateLimitedException` | Cirrux or the local limiter says to slow down; `$retryAfter` holds the seconds to wait |
+| `StaleCalendarException` | The week cache is missing, expired, older than `max_staleness` or does not cover the window; `$calendarUuid` holds the calendar |
+| `InvalidConfigurationException` | The `cirrux` config cannot be used; thrown when the app boots and names the key |
 
 ### Replacing behaviour
 
@@ -160,7 +212,7 @@ $this->app->bind(\Codesmiths\CirruxCalendar\Actions\Events\CreateEvent::class, M
 | Release | Adds |
 | --- | --- |
 | 0.1 (this beta) | Device login, token refresh, calendars, reading, creating and deleting events |
-| next | Week cache refreshed by a scheduled job, `cirrux:refresh`, write-through, fail closed when data is stale |
+| this release | Week cache refreshed by a scheduled job, `cirrux:refresh`, write-through, fail closed when data is stale, config validation |
 | later | Availability: slots from working hours, buffers, minimum notice and time zones, including DST changes |
 | later | Booking and cancelling with a per-calendar lock, a fresh check before booking, a `cirrux_bookings` table and reconciliation |
 

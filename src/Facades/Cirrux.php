@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\Facade;
 /**
  * @method static Collection<int, Calendar> calendars()
  * @method static CalendarResource calendar(string $uuid)
+ * @method static void refresh(?string $calendarUuid = null)
+ * @method static void forget(?string $calendarUuid = null)
  *
  * @mixin CirruxManager
  */
