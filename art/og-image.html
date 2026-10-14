@@ -1,74 +1,70 @@
 <!doctype html>
 <!--
-  Source of art/og-image.png (1280x640, the GitHub social preview).
-  Regenerate:
+  Source of art/og-image.png (social card, 2:1), in the Codesmiths style of codesmiths.nl and
+  laravel-ocr-space: JetBrains Mono, a light grid, Monokai orange for the package name, the logos
+  of the service and Laravel top right.
+
+  Logos: art/logos/cirrux-icon.png (the Cirrux favicon, cirrux.co) with the "cirrux" wordmark in
+  Geist extrabold as on cirrux.co, and art/logos/laravel-mark.svg (github.com/laravel/art).
+  The package is unofficial; the card says so.
+
+  Regenerate (renders at 2x, 2560x1280; needs JetBrains Mono installed and network for Geist):
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --hide-scrollbars \
-    --window-size=1280,640 --screenshot=art/og-image.png art/og-image.html
+    --force-device-scale-factor=2 --window-size=1280,640 --screenshot=art/og-image.png art/og-image.html
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Laravel Cirrux Calendar</title>
 <style>
+  @font-face {
+    font-family: "Geist";
+    src: url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Black.woff2") format("woff2");
+    font-weight: 800;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 1280px; height: 640px; overflow: hidden; }
   body {
-    background: #0f172a;
-    color: #e2e8f0;
-    font-family: -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+    font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    color: #272822;
+    background-color: #fbfbfc;
+    background-image:
+      linear-gradient(to right, #eef0f3 1px, transparent 1px),
+      linear-gradient(to bottom, #eef0f3 1px, transparent 1px);
+    background-size: 53.33px 53.33px;
     position: relative;
   }
-  .grid {
-    position: absolute; right: 64px; top: 72px;
-    display: grid; grid-template-columns: repeat(5, 72px); gap: 10px;
+  .logos {
+    position: absolute; top: 76px; right: 92px;
+    display: flex; align-items: center; gap: 72px;
   }
-  .grid span {
-    height: 52px; border-radius: 8px;
-    background: #1e293b; border: 1px solid #334155;
+  .cirrux { display: flex; align-items: center; gap: 14px; }
+  .cirrux img { width: 58px; height: 58px; }
+  .cirrux span {
+    font-family: "Geist", sans-serif; font-weight: 800;
+    font-size: 54px; letter-spacing: -0.05em; color: #000;
+    line-height: 1; padding-bottom: 6px;
   }
-  .grid span.busy { background: #334155; }
-  .grid span.free { background: #0d3b2e; border-color: #10b981; }
-  .grid span.booked { background: #10b981; border-color: #10b981; }
-  .grid .day {
-    height: auto; background: none; border: none;
-    font-size: 18px; color: #64748b; text-align: center; padding-bottom: 4px;
-  }
-  .content { position: absolute; left: 80px; top: 88px; width: 640px; }
-  .tag {
-    display: inline-block; font-size: 20px; letter-spacing: 0.04em;
-    color: #10b981; border: 1px solid #10b981; border-radius: 999px;
-    padding: 6px 16px; margin-bottom: 32px;
-  }
-  h1 { font-size: 76px; line-height: 1.02; font-weight: 800; color: #f8fafc; letter-spacing: -0.02em; }
-  p { font-size: 28px; line-height: 1.4; color: #94a3b8; margin-top: 28px; }
-  code {
-    position: absolute; left: 80px; bottom: 72px;
-    font-family: "SF Mono", Menlo, monospace; font-size: 24px;
-    color: #e2e8f0; background: #1e293b; border: 1px solid #334155;
-    border-radius: 10px; padding: 16px 22px;
-  }
-  code .k { color: #10b981; }
-  code .s { color: #fbbf24; }
-  .note { position: absolute; right: 64px; bottom: 80px; font-size: 18px; color: #64748b; }
+  .laravel { height: 104px; width: auto; }
+  .text { position: absolute; left: 76px; bottom: 120px; }
+  .brand { font-size: 46px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: #2b2b2b; }
+  .package { font-size: 50px; font-weight: 400; color: #e8823a; letter-spacing: 0.06em; margin-top: 2px; }
+  .tagline { font-size: 22px; font-style: italic; font-weight: 300; color: #2b2b2b; margin-top: 38px; letter-spacing: 0.05em; }
+  .note { position: absolute; right: 92px; bottom: 56px; font-size: 14px; color: #9ca3af; letter-spacing: 0.06em; }
 </style>
 </head>
 <body>
-  <div class="content">
-    <span class="tag">Laravel package · beta</span>
-    <h1>Laravel Cirrux Calendar</h1>
-    <p>Cached availability, booking and cancelling on the Cirrux calendar API.</p>
+  <div class="logos">
+    <div class="cirrux"><img src="logos/cirrux-icon.png" alt=""><span>cirrux</span></div>
+    <img class="laravel" src="logos/laravel-mark.svg" alt="Laravel">
   </div>
 
-  <div class="grid" aria-hidden="true">
-    <span class="day">Mon</span><span class="day">Tue</span><span class="day">Wed</span><span class="day">Thu</span><span class="day">Fri</span>
-    <span class="free"></span><span class="busy"></span><span></span><span class="busy"></span><span class="free"></span>
-    <span class="booked"></span><span></span><span class="busy"></span><span></span><span class="free"></span>
-    <span class="free"></span><span class="busy"></span><span></span><span></span><span class="booked"></span>
-    <span class="free"></span><span></span><span></span><span class="busy"></span><span class="free"></span>
-    <span class="busy"></span><span></span><span class="busy"></span><span></span><span class="free"></span>
+  <div class="text">
+    <div class="brand">Codesmiths</div>
+    <div class="package">laravel-cirrux-calendar</div>
+    <div class="tagline">Availability and bookings in your Cirrux calendar, from Laravel</div>
   </div>
 
-  <code><span class="k">Cirrux</span>::book(<span class="s">'demo'</span>, $start, $attendee)</code>
-  <div class="note">Unofficial · not affiliated with Cirrux</div>
+  <div class="note">unofficial · not affiliated with Cirrux</div>
 </body>
 </html>
