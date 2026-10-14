@@ -44,6 +44,9 @@ it('reads the default demo event type of the package config', function (): void 
         ->and($type->timezone)->toBe('Europe/Amsterdam')
         ->and($type->hours)->toBe([
             'mon' => [['09:00', '12:00'], ['13:00', '17:00']],
+            'tue' => [['09:00', '12:00'], ['13:00', '17:00']],
+            'wed' => [['09:00', '12:00'], ['13:00', '17:00']],
+            'thu' => [['09:00', '12:00'], ['13:00', '17:00']],
             'fri' => [['09:00', '12:00'], ['13:00', '17:00']],
         ])
         ->and($type->url)->toBeNull()

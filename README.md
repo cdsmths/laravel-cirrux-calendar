@@ -73,7 +73,7 @@ CIRRUX_DEMO_URL=https://meet.example.com/demo   # optional: a video call link on
 
 ### 5. Describe what can be booked
 
-An **event type** in `config/cirrux.php` says what a booking is (30 minutes, called "Demo") and when it can happen (Mondays and Fridays, 09:00 to 12:00 and 13:00 to 17:00, Amsterdam time). The package ships one called `demo`; change it or add your own next to it:
+An **event type** in `config/cirrux.php` says what a booking is (30 minutes, called "Demo") and when it can happen (weekdays, 09:00 to 12:00 and 13:00 to 17:00, Amsterdam time). The package ships one called `demo`; change it or add your own next to it:
 
 ```php
 'event_types' => [
@@ -87,8 +87,11 @@ An **event type** in `config/cirrux.php` says what a booking is (30 minutes, cal
         'min_notice' => 60 * 24,   // book at least a day ahead
         'max_days_ahead' => 21,    // and at most three weeks
         'timezone' => 'Europe/Amsterdam',
-        'hours' => [
+        'hours' => [               // days left out cannot be booked
             'mon' => [['09:00', '12:00'], ['13:00', '17:00']],
+            'tue' => [['09:00', '12:00'], ['13:00', '17:00']],
+            'wed' => [['09:00', '12:00'], ['13:00', '17:00']],
+            'thu' => [['09:00', '12:00'], ['13:00', '17:00']],
             'fri' => [['09:00', '12:00'], ['13:00', '17:00']],
         ],
     ],

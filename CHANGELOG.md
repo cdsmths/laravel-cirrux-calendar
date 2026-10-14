@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While Cirrux has no way to register a third-party app, releases stay on 0.x and a minor release may contain breaking changes.
 
+## [0.1.6] - 2026-10-14
+
+### Changed
+
+- The `demo` event type in the shipped config is bookable on every weekday instead of only on Monday and Friday. An app that published the config keeps its own hours.
+- The comments in `config/cirrux.php` are in English, with the unit of every value.
+
 ## [0.1.5] - 2026-10-14
 
 Brought in line with the [Cirrux API reference](https://cirrux.co/help/api/calendar), which now documents the calendar endpoints.

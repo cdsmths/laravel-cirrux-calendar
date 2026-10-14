@@ -21,11 +21,15 @@ use Illuminate\Support\Facades\Event;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Laravel\Facades\Saloon;
 
-// Wednesday 2026-10-28, ISO week 2026-W44. The demo event type is bookable on Monday and Friday,
-// 30 minute slots with 10 minute buffers, a day of notice and 21 days ahead; Amsterdam is on CET (UTC+1).
+// Wednesday 2026-10-28, ISO week 2026-W44. The demo event type is made bookable on Monday and Friday
+// only, 30 minute slots with 10 minute buffers, a day of notice and 21 days ahead; Amsterdam is on CET (UTC+1).
 beforeEach(function (): void {
     $this->travelTo(CarbonImmutable::parse('2026-10-28T12:00:00Z'));
     config()->set('cirrux.event_types.demo.calendar', 'cal-1');
+    config()->set('cirrux.event_types.demo.hours', [
+        'mon' => [['09:00', '12:00'], ['13:00', '17:00']],
+        'fri' => [['09:00', '12:00'], ['13:00', '17:00']],
+    ]);
     resolve(TokenStore::class)->put(new Tokens('access', 'refresh', CarbonImmutable::now('UTC')->addHour()));
 });
 
