@@ -4,7 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-While the Cirrux calendar endpoints are undocumented, releases stay on 0.x and a minor release may contain breaking changes.
+While Cirrux has no way to register a third-party app, releases stay on 0.x and a minor release may contain breaking changes.
+
+## [0.1.5] - 2026-10-14
+
+Brought in line with the [Cirrux API reference](https://cirrux.co/help/api/calendar), which now documents the calendar endpoints.
+
+### Added
+
+- `CirruxRequestException::$error` holds the error code Cirrux answered with (such as `calendar_read_only`, `not_authorized` or `subscription_required`), and the message names the code and the description.
+- `Calendar` carries `mailboxAddress` and `canWrite`. `cirrux:calendars` shows both and warns that a calendar that is not writable cannot take bookings.
+- A "Getting started" walkthrough in the README, with a worked example of how slots come about and what to check when there are none.
+
+### Changed
+
+- Event times are sent as UTC instants with the event's time zone instead of a wall-clock time. `NewEvent` therefore accepts times with seconds and times in the repeated hour of a DST change; only an end that is not after the start is still rejected. Availability still skips slots around a DST change.
+- Reads ask Cirrux for the window itself instead of a day more: Cirrux documents that it matches the window on overlap.
 
 ## [0.1.4] - 2026-10-14
 

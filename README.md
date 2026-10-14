@@ -7,9 +7,9 @@ A Laravel package for the calendar API of [Cirrux](https://cirrux.co): log in, r
 The package only gives you methods. It ships no routes and no UI: the booking page, forms and emails belong to your app.
 
 > [!WARNING]
-> **Beta and unofficial.** Cirrux has not documented its calendar endpoints publicly yet. What this package uses comes from the source code of the open source [Cirrux CLI](https://github.com/cirrux-co/cli), and it can change without notice. This package is not made by or affiliated with Cirrux.
+> **Beta and unofficial.** The calendar endpoints are documented in the [Cirrux API reference](https://cirrux.co/help/api/calendar), but Cirrux has no way yet to register an app of your own: logging in borrows the OAuth client of the open source [Cirrux CLI](https://github.com/cirrux-co/cli). This package is not made by or affiliated with Cirrux.
 >
-> Releases stay on **0.x** until the endpoints are documented, so a minor release may contain breaking changes. Pin a minor version (`^0.1`) and read the changelog before you upgrade.
+> Releases stay on **0.x** while that is the case, so a minor release may contain breaking changes. Pin a minor version (`^0.1`) and read the changelog before you upgrade.
 
 ## Requirements
 
@@ -18,24 +18,164 @@ The package only gives you methods. It ships no routes and no UI: the booking pa
 - A cache store that supports atomic locks and is shared between your web workers and the scheduler (Redis, database, Memcached or DynamoDB)
 - A Cirrux account. The calendar endpoints only accept user-scoped OAuth tokens; a workspace API key gets `403 Forbidden`.
 
-## Installation
+## Getting started
+
+From a fresh install to the first booking, in seven steps. The sections further down explain each part in detail.
+
+### 1. Install the package and run the migrations
 
 ```bash
 composer require cdsmths/laravel-cirrux-calendar
-```
-
-Publish and run the migrations. They create the `cirrux_tokens` table, which stores the tokens with the refresh token encrypted, and the `cirrux_bookings` table, which holds the bookings the package made.
-
-```bash
 php artisan vendor:publish --tag=cirrux-migrations
+php artisan vendor:publish --tag=cirrux-config
 php artisan migrate
 ```
 
-Publishing the config file is optional:
+The migrations create `cirrux_tokens` (your login, with the refresh token encrypted) and `cirrux_bookings` (the bookings the package made). Publishing the config is optional, but you will want to change the working hours.
+
+### 2. Point the package at a shared cache store
+
+```dotenv
+CIRRUX_CACHE_STORE=redis
+```
+
+The calendar is read from this cache and the locks live there, so it must support locks and be shared by your web workers and the scheduler: Redis, database, Memcached or DynamoDB. `array`, `file` and `null` do not work in production.
+
+### 3. Log in to Cirrux
 
 ```bash
-php artisan vendor:publish --tag=cirrux-config
+php artisan cirrux:login
 ```
+
+Open the URL it shows, enter the code and approve. You do this once per environment; from then on the package refreshes the token by itself. Log in with the Cirrux account whose calendar people will book into.
+
+### 4. Pick the calendar
+
+```bash
+php artisan cirrux:calendars
+```
+
+```text
++----------+-------------------+--------------------------------------+----------+---------+
+| Name     | Mailbox           | UUID                                 | Writable | Color   |
++----------+-------------------+--------------------------------------+----------+---------+
+| Calendar | sales@example.com | 9a8b7c6d-2222-4e5f-9a1b-000000000002 | yes      | #00CCAA |
+| Holidays | -                 | 0f1e2d3c-5555-4a6b-8c7d-000000000005 | no       | -       |
++----------+-------------------+--------------------------------------+----------+---------+
+```
+
+Copy the UUID of a calendar that is writable. A calendar you can only view, or a subscription to an external feed, cannot take bookings.
+
+```dotenv
+CIRRUX_DEMO_CALENDAR=9a8b7c6d-2222-4e5f-9a1b-000000000002
+CIRRUX_DEMO_URL=https://meet.example.com/demo   # optional: a video call link on every booking
+```
+
+### 5. Describe what can be booked
+
+An **event type** in `config/cirrux.php` says what a booking is (30 minutes, called "Demo") and when it can happen (Mondays and Fridays, 09:00 to 12:00 and 13:00 to 17:00, Amsterdam time). The package ships one called `demo`; change it or add your own next to it:
+
+```php
+'event_types' => [
+    'demo' => [
+        'calendar' => env('CIRRUX_DEMO_CALENDAR'),
+        'title' => 'Demo',
+        'duration' => 30,          // minutes
+        'slot_interval' => 30,     // a slot starts every 30 minutes
+        'buffer_before' => 10,     // free minutes needed before a slot
+        'buffer_after' => 10,      // and after it
+        'min_notice' => 60 * 24,   // book at least a day ahead
+        'max_days_ahead' => 21,    // and at most three weeks
+        'timezone' => 'Europe/Amsterdam',
+        'hours' => [
+            'mon' => [['09:00', '12:00'], ['13:00', '17:00']],
+            'fri' => [['09:00', '12:00'], ['13:00', '17:00']],
+        ],
+    ],
+],
+```
+
+### 6. Schedule the refresh, and run it once
+
+Slots are computed from a cached copy of the calendar, never from Cirrux directly. Without a refresh there is no copy, and **without a copy there are no slots**. Add the refresh to `routes/console.php`:
+
+```php
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('cirrux:refresh')->everyFiveMinutes()->withoutOverlapping();
+```
+
+Make sure the scheduler runs (`php artisan schedule:work` locally, a cron entry in production), and fill the cache right away:
+
+```bash
+php artisan cirrux:refresh
+```
+
+### 7. Show the slots and book one
+
+```php
+use Carbon\CarbonImmutable;
+use Codesmiths\CirruxCalendar\Data\Attendee;
+use Codesmiths\CirruxCalendar\Exceptions\InvalidSlotException;
+use Codesmiths\CirruxCalendar\Exceptions\SlotUnavailableException;
+use Codesmiths\CirruxCalendar\Facades\Cirrux;
+use Illuminate\Http\Request;
+
+final class DemoController
+{
+    public function index()
+    {
+        $slots = Cirrux::availability('demo')
+            ->between(CarbonImmutable::now(), CarbonImmutable::now()->addWeeks(3))
+            ->inTimezone('Europe/Amsterdam')
+            ->slots();
+
+        return view('demo.index', ['slots' => $slots]); // each slot has ->start and ->end
+    }
+
+    public function store(Request $request)
+    {
+        $data = $request->validate([
+            'start' => ['required', 'date'],
+            'email' => ['required', 'email'],
+            'name' => ['required', 'string', 'max:100'],
+        ]);
+
+        try {
+            $booking = Cirrux::book(
+                'demo',
+                CarbonImmutable::parse($data['start']),
+                new Attendee($data['email'], $data['name']),
+                title: 'Demo for '.$data['name'],
+            );
+        } catch (InvalidSlotException|SlotUnavailableException) {
+            return back()->withErrors(['start' => 'That time is no longer available. Please pick another one.']);
+        }
+
+        return view('demo.booked', ['booking' => $booking]);
+    }
+}
+```
+
+Post `start` back exactly as the slot gave it to you, for example `$slot->start->toIso8601String()`. Cirrux mails the attendee the invitation, so there is no confirmation email to send. Cancel with `Cirrux::cancel($booking)`.
+
+### How a slot comes about
+
+This is what `slots()` does for every day in the window, with the `demo` event type above. Say it is Thursday 29 October, and on Monday 2 November there is a meeting in the calendar from 10:00 to 11:00.
+
+1. **Working hours make a grid.** Monday has the periods 09:00 to 12:00 and 13:00 to 17:00. A slot starts every `slot_interval` (30) minutes and has to end inside its period, so the candidates are 09:00, 09:30, 10:00, 10:30, 11:00 and 11:30, then 13:00 up to 16:30. 11:30 still fits (it ends at 12:00), 12:00 does not. A day that is not in `hours` has no slots at all.
+2. **Notice and horizon cut off the edges.** A slot has to start at least `min_notice` (24 hours) from now and less than `max_days_ahead` (21 days) from now. On Thursday afternoon, Friday morning is too soon; Monday is fine.
+3. **Busy events and their buffers take slots away.** A slot needs `buffer_before` (10) free minutes before it and `buffer_after` (10) after it. The 09:30 slot would need 09:20 to 10:10 free, which runs into the meeting, so it is gone. So are 10:00, 10:30 and 11:00 (that one needs 10:50 to 11:40). 09:00 needs 08:50 to 09:40 and stays, and so does 11:30, which needs 11:20 to 12:10. Events marked "free" (transparent) block nothing; an all-day event that shows you as busy blocks the whole day.
+4. **What remains is offered.** On that Monday: 09:00, 11:30, and every slot from 13:00 to 16:30.
+
+`slots()` returns these as `Slot` objects with a UTC `start` and `end`; `inTimezone()` only changes how they are presented. `book()` checks the same rules again, and then checks the calendar with Cirrux itself, so a slot that was taken in the meantime is refused instead of booked twice.
+
+**No slots?** Check these, in this order:
+
+- **The cache is empty or too old.** `slots()` only answers from a refresh that is younger than `cirrux.cache.max_staleness` (two hours by default). Otherwise it returns nothing and dispatches `CalendarStale`. Run `php artisan cirrux:refresh` and check that the scheduler runs.
+- **The window lies outside the bookable range.** The `min_notice` and `max_days_ahead` rules apply to the window you pass: a window of tomorrow only has no slots with the default notice of a day.
+- **The day is not in `hours`,** or the periods are shorter than `duration`.
+- **The calendar is simply full,** keeping the buffers in mind.
 
 ## Configuration
 
@@ -87,15 +227,15 @@ php artisan cirrux:logout      # deletes the stored tokens
 ### Calendars
 
 ```bash
-php artisan cirrux:calendars   # name, UUID and color of each calendar
+php artisan cirrux:calendars   # name, mailbox, UUID, whether it is writable, and color
 ```
 
-This command always asks Cirrux and refreshes the cache. Use it to find the UUIDs you need in your config.
+This command always asks Cirrux and refreshes the cache. Use it to find the UUIDs you need in your config. A calendar that is linked to two of your mailboxes appears twice, with the same UUID; the mailbox column tells calendars with the same name apart.
 
 ```php
 use Codesmiths\CirruxCalendar\Facades\Cirrux;
 
-$calendars = Cirrux::calendars(); // Collection<int, Calendar> with uuid, name, color
+$calendars = Cirrux::calendars(); // Collection<int, Calendar> with uuid, name, color, mailboxAddress, canWrite
 ```
 
 `Cirrux::calendars()` reads through the cache (`cirrux.cache.calendars_ttl`).
@@ -128,7 +268,7 @@ Good to know:
 - **All times are UTC.** Every `CalendarEvent` holds `CarbonImmutable` instants in UTC. Convert them for display only.
 - **`between()` matches on overlap.** An event belongs to the window `[from, to)` when it overlaps it, including one that starts before `from`. The package follows every page of results and removes duplicates.
 - **Cirrux mails the attendees.** Each attendee gets an invitation when the event is created and a cancellation when it is deleted. You don't need to send confirmation emails yourself.
-- **Times are per minute.** `NewEvent` rejects a start or end with seconds, an end that is not after the start, and a time in the repeated hour of a DST change. Cirrux receives a wall-clock time without an offset, so such a time would mean two different moments.
+- **Times are sent as instants.** `NewEvent` sends each bound as a UTC instant together with the `timezone`, which Cirrux keeps as the event's own zone. A time in the repeated hour of a DST change is therefore unambiguous. `NewEvent` only rejects an end that is not after the start.
 - **Deleting is idempotent.** An event that is already gone counts as deleted.
 - **Writes are sent once.** Creating and deleting are never retried, so a request that did reach Cirrux cannot create a second event.
 
@@ -289,7 +429,7 @@ Everything the package throws extends `Codesmiths\CirruxCalendar\Exceptions\Cirr
 | Exception | Meaning |
 | --- | --- |
 | `CirruxAuthException` | Not logged in, or the tokens can no longer be refreshed |
-| `CirruxRequestException` | Cirrux refused the request or could not be reached; `status()` returns the HTTP status (0 when no response came back) |
+| `CirruxRequestException` | Cirrux refused the request or could not be reached; `status()` returns the HTTP status (0 when no response came back) and `$error` the error code of Cirrux, such as `calendar_read_only`, `not_authorized` or `subscription_required` (null when there is none) |
 | `RateLimitedException` | Cirrux or the local limiter says to slow down; `$retryAfter` holds the seconds to wait |
 | `StaleCalendarException` | The week cache is missing, expired, older than `max_staleness` or does not cover the window; `$calendarUuid` holds the calendar |
 | `InvalidConfigurationException` | The `cirrux` config cannot be used; thrown when the app boots and names the key |
@@ -332,7 +472,7 @@ The unit and feature tests never make real HTTP calls.
 
 ### Contract tests
 
-Because the API is undocumented, an opt-in suite runs against a real Cirrux account to notice when the API behaves differently from what the package assumes. It creates events in a test calendar and deletes them afterwards. Without credentials, the suite is skipped.
+An opt-in suite runs against a real Cirrux account to notice when the API behaves differently from its documentation or from what the package assumes. It creates events in a test calendar and deletes them afterwards. Without credentials, the suite is skipped.
 
 ```bash
 CIRRUX_TEST_CALENDAR=<uuid of an empty calendar> \
@@ -348,7 +488,7 @@ Issues and pull requests are welcome. Before you open a pull request:
 
 - run `composer lint` and `composer test`, and keep coverage at 100%;
 - follow the existing style: `declare(strict_types=1)`, `final` classes, `CarbonImmutable`, actions for side effects;
-- if you notice the API behaving differently from the docblocks in `src/Http/Requests`, an issue with the request and response (tokens removed) helps a lot.
+- if you notice the API behaving differently from the [Cirrux API reference](https://cirrux.co/help/api/calendar) or the docblocks in `src/Http/Requests`, an issue with the request and response (tokens removed) helps a lot.
 
 ## Security
 
