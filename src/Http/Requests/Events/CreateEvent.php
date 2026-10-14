@@ -15,10 +15,10 @@ use Saloon\Traits\Body\HasJsonBody;
 /**
  * Creates an event; Cirrux mails every attendee an invitation.
  *
- * Request body: see NewEvent::toBody() (cirrux-co/cli @ da5fd0f, src/commands/calendar/events/event-body.ts).
- * Assumed response: the created event object, the same shape as one item of ListEvents
- * (CLI create.ts reads it as `CalendarEvent` and prints `event.id`). For a non-recurring
- * event `id` equals `event_uuid` and `series_uuid` is null.
+ * Request body: see NewEvent::toBody(). Cirrux answers 201 with the event object, the same shape
+ * as one item of ListEvents (cirrux.co/help/api/calendar, "Create an event"). For a one-off
+ * event `id` equals `event_uuid` and `series_uuid` is null. An unknown field in the body is
+ * refused with 422 `invalid_value`, and a workspace without a subscription gets 402.
  *
  * Sent once: a POST that arrived but answered 5xx must not produce a second event.
  */

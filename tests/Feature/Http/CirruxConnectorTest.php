@@ -66,6 +66,25 @@ it('talks to the public api with the stored bearer token', function (): void {
     Saloon::assertSentCount(1);
 });
 
+it('puts the error code and description of Cirrux in the request exception', function (array|string $body, ?string $error, string $message): void {
+    loggedIn();
+    Saloon::fake([PingRequest::class => MockResponse::make($body, 403)]);
+
+    try {
+        ping();
+        $this->fail('Expected a CirruxRequestException.');
+    } catch (CirruxRequestException $cirruxRequestException) {
+        expect($cirruxRequestException->status())->toBe(403)
+            ->and($cirruxRequestException->error)->toBe($error)
+            ->and($cirruxRequestException->getMessage())->toContain($message);
+    }
+})->with([
+    'code and description' => [['error' => 'calendar_read_only', 'error_description' => 'The calendar is a subscription.'], 'calendar_read_only', 'Cirrux answered 403 calendar_read_only: The calendar is a subscription.'],
+    'code only' => [['error' => 'not_authorized'], 'not_authorized', 'Cirrux answered 403 not_authorized.'],
+    'no code' => [['message' => 'nope'], null, '403'],
+    'not json' => ['<html>Forbidden</html>', null, '403'],
+]);
+
 it('copes with a base url without a trailing slash', function (): void {
     config()->set('cirrux.base_url', 'https://cirrux.test');
 

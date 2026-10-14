@@ -38,7 +38,8 @@ it('maps the calendar list to calendar dtos', function (): void {
                     'position' => 0,
                     'is_default' => true,
                 ],
-                ['calendar_uuid' => 'cal-2', 'name' => 'Private', 'color' => null],
+                ['uuid' => 'link-2', 'calendar_uuid' => 'cal-2', 'name' => 'Holidays', 'color' => null, 'can_write' => false, 'source' => 'subscribed'],
+                ['calendar_uuid' => 'cal-3', 'name' => 'Private', 'color' => null],
             ],
         ]),
     ]);
@@ -49,10 +50,11 @@ it('maps the calendar list to calendar dtos', function (): void {
     expect($response->getPendingRequest()->getUrl())->toBe('https://api.cirrux.co/public_api/v1/calendars')
         ->and($calendars)->toBeInstanceOf(Collection::class)
         ->and($calendars->all())->toEqual([
-            new Calendar('cal-1', 'Demo', '#ff8800'),
-            new Calendar('cal-2', 'Private', null),
+            new Calendar('cal-1', 'Demo', '#ff8800', 'thomas@example.com', true),
+            new Calendar('cal-2', 'Holidays', null, null, false),
+            new Calendar('cal-3', 'Private', null),
         ])
-        ->and($calendars->keys()->all())->toBe([0, 1]);
+        ->and($calendars->keys()->all())->toBe([0, 1, 2]);
 });
 
 it('maps an empty list to an empty collection', function (): void {

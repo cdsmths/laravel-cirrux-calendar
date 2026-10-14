@@ -104,8 +104,8 @@ it('books a free slot: one fresh list, one create, a row and BookingCreated', fu
     Saloon::assertSent(fn (CreateEventRequest $request): bool => $request->body()->all() === [
         'title' => 'Demo',
         'transparency' => 'opaque',
-        'start' => ['date_time' => '2026-10-30T09:00', 'time_zone' => 'Europe/Amsterdam'],
-        'end' => ['date_time' => '2026-10-30T09:30', 'time_zone' => 'Europe/Amsterdam'],
+        'start' => ['date_time' => '2026-10-30T08:00:00Z', 'time_zone' => 'Europe/Amsterdam'],
+        'end' => ['date_time' => '2026-10-30T08:30:00Z', 'time_zone' => 'Europe/Amsterdam'],
         'description' => 'Bring a laptop',
         'attendees' => [['email' => 'jan@example.com', 'name' => 'Jan']],
     ]);

@@ -99,7 +99,7 @@ it('reads all pages, drops duplicates and sends the window in UTC', function ():
     $query = array_map(static fn (Response $response): array => $response->getPendingRequest()->query()->all(), $recorded);
 
     expect($query[0])->toBe([
-        'time_min' => '2026-10-19T10:00:00Z',
+        'time_min' => '2026-10-20T10:00:00Z',
         'time_max' => '2026-10-20T12:00:00Z',
         'timezone' => 'UTC',
     ])
@@ -167,7 +167,7 @@ it('never changes the query it was called on', function (): void {
     expect($sent)->toBe(['2026-10-20T12:00:00Z', '2026-10-21T12:00:00Z', '2026-10-20T12:00:00Z']);
 });
 
-it('asks Cirrux for a day before the window and filters the lookback locally', function (): void {
+it('asks Cirrux for the window itself and filters on overlap locally', function (): void {
     Saloon::fake([ListEvents::class => MockResponse::make(['has_more' => false, 'data' => [
         slot('runs-into', '2026-10-20T09:00:00Z', '2026-10-20T10:30:00Z'),
         slot('ended-before', '2026-10-19T12:00:00Z', '2026-10-19T13:00:00Z'),
@@ -177,7 +177,7 @@ it('asks Cirrux for a day before the window and filters the lookback locally', f
 
     $events = windowQuery()->get();
 
-    expect(Saloon::mockClient()->getRecordedResponses()[0]->getPendingRequest()->query()->all()['time_min'])->toBe('2026-10-19T10:00:00Z')
+    expect(Saloon::mockClient()->getRecordedResponses()[0]->getPendingRequest()->query()->all()['time_min'])->toBe('2026-10-20T10:00:00Z')
         ->and($events->pluck('id')->all())->toBe(['runs-into', 'inside']);
 });
 
@@ -249,7 +249,7 @@ it('accepts windows in any timezone', function (): void {
 
     $query = Saloon::mockClient()->getRecordedResponses()[0]->getPendingRequest()->query()->all();
 
-    expect($query['time_min'])->toBe('2026-10-19T10:00:00Z')
+    expect($query['time_min'])->toBe('2026-10-20T10:00:00Z')
         ->and($query['time_max'])->toBe('2026-10-20T12:00:00Z');
 });
 

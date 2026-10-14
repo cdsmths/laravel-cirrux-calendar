@@ -25,8 +25,6 @@ use LogicException;
  */
 final readonly class EventQuery
 {
-    private const int LOOKBACK_HOURS = 24;
-
     private function __construct(
         private string $calendarUuid,
         private CirruxConnector $connector,
@@ -75,11 +73,9 @@ final readonly class EventQuery
      * cache cannot vouch for the window the read fails closed instead of answering "no events".
      * After fresh() Cirrux is asked instead, over all pages, in the order Cirrux sent them.
      *
-     * Cirrux is asked for `[from - 24h, to)` and the result is filtered locally on real overlap
-     * with `[from, to)`. Whether Cirrux matches `time_min`/`time_max` on overlap or on start is
-     * still open (plan: open point 3), so the lookback guarantees an event that starts before
-     * `from` and runs into the window only up to 24 hours in length. A longer event that starts
-     * before the lookback is found only if Cirrux filters on overlap.
+     * Cirrux matches `time_min`/`time_max` on overlap (cirrux.co/help/api/calendar), so an event
+     * that starts before `from` and runs into the window comes along, however long it is. The
+     * result is still filtered locally on overlap with `[from, to)`, to the instant.
      *
      * @return Collection<int, CalendarEvent>
      *
@@ -100,7 +96,7 @@ final readonly class EventQuery
         }
 
         // Internally everything is UTC, so Cirrux is asked for UTC too.
-        $paginator = $this->connector->paginate(new ListEvents($this->calendarUuid, $from->subHours(self::LOOKBACK_HOURS), $to, 'UTC'));
+        $paginator = $this->connector->paginate(new ListEvents($this->calendarUuid, $from, $to, 'UTC'));
 
         $events = [];
 

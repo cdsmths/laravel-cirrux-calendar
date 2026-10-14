@@ -146,8 +146,7 @@ final class ContractSession
 
     /**
      * An instant `$days` days after the anchor of this test (a day 30 days from the start of
-     * the test) at `$hour:$minute` UTC. Whole minutes, and never in the repeated hour of the
-     * autumn change (that is 00:00-01:00 UTC), so NewEvent accepts it.
+     * the test) at `$hour:$minute` UTC, in whole minutes.
      */
     public static function at(int $days, int $hour, int $minute = 0): CarbonImmutable
     {

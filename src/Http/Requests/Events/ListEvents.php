@@ -14,22 +14,22 @@ use Saloon\Http\Response;
 use Saloon\PaginationPlugin\Contracts\Paginatable;
 
 /**
- * One page of the events in a window, with recurring events expanded into occurrences.
- *
- * Assumed response (cirrux-co/cli @ da5fd0f, src/commands/calendar/calendar-shared.ts
- * `CalendarEventListResponse` and src/commands/calendar/events/list.ts):
+ * One page of the events in a window, with recurring events expanded into occurrences
+ * (cirrux.co/help/api/calendar, "List events"):
  * `{"object": "list", "time_min", "time_max", "timezone", "has_more": bool, "next_cursor"?: string, "data": [event, ...]}`
  * where each event is
- * `{"id", "event_uuid", "series_uuid": string|null, "recurrence_id": string|null, "is_exception": bool,
+ * `{"id", "event_uuid", "series_uuid": string|null, "recurrence_id": string|null, "is_exception": bool, "status",
  *   "title": string|null, "all_day": bool, "transparency": string|null, "recurrence": string|null,
- *   "start": {"date_time", "time_zone"} | {"date"}, "end": same, "attendees": [{"email": string|null, "name": string|null, ...}], ...}`.
+ *   "start": {"date_time", "time_zone"} | {"date"}, "end": same, "attendees": [{"email", "name", "status", ...}], ...}`.
  *
- * Assumptions the CLI does not settle (to be pinned by the contract tests):
- * - `id` is the occurrence id: the event uuid for a single event, `<series-uuid>_<recurrence-id>` for a
- *   series occurrence (CLI `use_occurrence_id` hint); `series_uuid` is then the series uuid, null otherwise.
- * - `date_time` with a `Z` or offset is an instant; without one it is wall-clock time in `time_zone`.
- * - the `end` date of an all-day event is exclusive.
- * - `time_min`/`time_max` are sent as UTC instants; whether the window matches overlap or start is open (plan: open point 3).
+ * What the docs settle:
+ * - `id` is the occurrence id: the event uuid for a one-off, `<series_uuid>_<recurrence_id>` for an
+ *   occurrence of a series. Update and delete take it.
+ * - an event is in the window when it overlaps it: it starts before `time_max` and ends after `time_min`.
+ * - `date_time` is a UTC instant; the end date of an all-day event is exclusive, and all-day events
+ *   run from midnight to midnight in `timezone`.
+ * - cancelled events and occurrences are left out.
+ * - the window may be at most 366 days; a page holds 250 occurrences unless `limit` (1 to 2500) says otherwise.
  *
  * Use through CirruxConnector::paginate() to follow the cursor; a single send() yields one page.
  */

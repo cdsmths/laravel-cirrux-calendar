@@ -41,9 +41,19 @@ final class CalendarsCommand extends Command
         }
 
         $this->table(
-            ['Name', 'UUID', 'Color'],
-            $list->map(static fn (Calendar $calendar): array => [$calendar->name, $calendar->uuid, $calendar->color ?? '-'])->all(),
+            ['Name', 'Mailbox', 'UUID', 'Writable', 'Color'],
+            $list->map(static fn (Calendar $calendar): array => [
+                $calendar->name,
+                $calendar->mailboxAddress ?? '-',
+                $calendar->uuid,
+                $calendar->canWrite ? 'yes' : 'no',
+                $calendar->color ?? '-',
+            ])->all(),
         );
+
+        if ($list->contains(static fn (Calendar $calendar): bool => ! $calendar->canWrite)) {
+            $this->components->warn('A calendar that is not writable cannot take bookings: Cirrux refuses events there.');
+        }
 
         return self::SUCCESS;
     }

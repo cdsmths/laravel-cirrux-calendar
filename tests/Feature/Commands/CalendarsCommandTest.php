@@ -16,22 +16,37 @@ function loginForCommand(): void
     resolve(TokenStore::class)->put(new Tokens('access', 'refresh', CarbonImmutable::now('UTC')->addHour()));
 }
 
-it('lists the calendars with name, uuid and color', function (): void {
+it('lists the calendars with name, mailbox, uuid, whether they are writable and color', function (): void {
     loginForCommand();
     Saloon::fake([
         ListCalendars::class => MockResponse::make([
             'data' => [
-                ['calendar_uuid' => 'cal-1', 'name' => 'Demo', 'color' => '#ff8800'],
+                ['calendar_uuid' => 'cal-1', 'name' => 'Demo', 'color' => '#ff8800', 'mailbox_address' => 'thomas@example.com', 'can_write' => true],
                 ['calendar_uuid' => 'cal-2', 'name' => 'Private', 'color' => null],
             ],
         ]),
     ]);
 
     $this->artisan('cirrux:calendars')
-        ->expectsTable(['Name', 'UUID', 'Color'], [
-            ['Demo', 'cal-1', '#ff8800'],
-            ['Private', 'cal-2', '-'],
+        ->expectsTable(['Name', 'Mailbox', 'UUID', 'Writable', 'Color'], [
+            ['Demo', 'thomas@example.com', 'cal-1', 'yes', '#ff8800'],
+            ['Private', '-', 'cal-2', 'yes', '-'],
         ])
+        ->doesntExpectOutputToContain('not writable')
+        ->assertExitCode(0);
+});
+
+it('warns that a calendar that is not writable cannot take bookings', function (): void {
+    loginForCommand();
+    Saloon::fake([
+        ListCalendars::class => MockResponse::make([
+            'data' => [['calendar_uuid' => 'cal-1', 'name' => 'Holidays', 'color' => null, 'can_write' => false]],
+        ]),
+    ]);
+
+    $this->artisan('cirrux:calendars')
+        ->expectsTable(['Name', 'Mailbox', 'UUID', 'Writable', 'Color'], [['Holidays', '-', 'cal-1', 'no', '-']])
+        ->expectsOutputToContain('cannot take bookings')
         ->assertExitCode(0);
 });
 

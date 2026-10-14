@@ -27,12 +27,6 @@ use Throwable;
 final readonly class RefreshCalendar
 {
     /**
-     * Same lookback as EventQuery: Cirrux is asked a day earlier, so an event that starts
-     * before the window and runs into it is found even if Cirrux matches on start.
-     */
-    private const int LOOKBACK_HOURS = 24;
-
-    /**
      * How long a crashed process can hold the lock before it is released on its own.
      */
     private const int LOCK_SECONDS = 120;
@@ -91,7 +85,8 @@ final readonly class RefreshCalendar
     {
         [$from, $to] = $this->cache->refreshWindow();
 
-        $paginator = $this->connector->paginate(new ListEvents($calendarUuid, $from->subHours(self::LOOKBACK_HOURS), $to, 'UTC'));
+        // Cirrux matches the window on overlap, so an event that started before `from` comes along.
+        $paginator = $this->connector->paginate(new ListEvents($calendarUuid, $from, $to, 'UTC'));
 
         $events = [];
         $apiCalls = 0;

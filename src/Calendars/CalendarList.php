@@ -68,7 +68,7 @@ final readonly class CalendarList
 
     /**
      * @param  Collection<int, Calendar>  $calendars
-     * @return array<int, array{uuid: string, name: string, color: string|null}>
+     * @return array<int, array{uuid: string, name: string, color: string|null, mailbox_address: string|null, can_write: bool}>
      */
     private function toRows(Collection $calendars): array
     {

@@ -111,7 +111,7 @@ it('fetches every page, then replaces the weeks in one go and announces it', fun
     $query = array_map(static fn (Response $response): array => $response->getPendingRequest()->query()->all(), Saloon::mockClient()->getRecordedResponses());
 
     expect($query[0])->toBe([
-        'time_min' => '2026-10-25T12:00:00Z',
+        'time_min' => '2026-10-26T12:00:00Z',
         'time_max' => '2026-11-25T12:00:00Z',
         'timezone' => 'UTC',
     ])->and($query[1]['cursor'])->toBe('c1');

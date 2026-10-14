@@ -176,8 +176,8 @@ final readonly class SlotCalculator
 
     /**
      * The instant of a local wall-clock time, or null when that time does not exist (spring)
-     * or occurs twice (autumn). Same test as NewEvent: read the time with the UTC offsets of
-     * the day before and after, and count how many distinct instants give it back.
+     * or occurs twice (autumn): read the time with the UTC offsets of the day before and after,
+     * and count how many distinct instants give it back.
      */
     private function instantAt(EventType $type, string $date, int $minute): ?CarbonImmutable
     {

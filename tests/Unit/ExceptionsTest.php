@@ -21,8 +21,11 @@ it('carries the status and previous exception on a request exception', function 
         ->and($exception->getPrevious())->toBe($previous);
 });
 
-it('defaults the status of a request exception to zero', function (): void {
-    expect((new CirruxRequestException('No response.'))->status())->toBe(0);
+it('defaults the status of a request exception to zero and the error code to null', function (): void {
+    $exception = new CirruxRequestException('No response.');
+
+    expect($exception->status())->toBe(0)
+        ->and($exception->error)->toBeNull();
 });
 
 it('carries the retry delay on a rate limited exception', function (): void {

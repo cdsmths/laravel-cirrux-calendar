@@ -146,10 +146,10 @@ it('round-trips an attendee', function (): void {
         ->and(Attendee::fromArray(['email' => 'piet@example.com']))->toEqual(new Attendee('piet@example.com'));
 });
 
-it('builds the request body in wall-clock time of the event timezone', function (): void {
+it('builds the request body with UTC instants and the event timezone', function (): void {
     $event = new NewEvent(
         title: 'Demo Trivle',
-        start: CarbonImmutable::parse('2026-10-20T08:00:00Z'),
+        start: CarbonImmutable::parse('2026-10-20T10:00:00', 'Europe/Amsterdam'),
         end: CarbonImmutable::parse('2026-10-20T08:30:00Z'),
         timezone: 'Europe/Amsterdam',
         description: 'Intro',
@@ -162,8 +162,8 @@ it('builds the request body in wall-clock time of the event timezone', function 
     expect($event->toBody())->toBe([
         'title' => 'Demo Trivle',
         'transparency' => 'opaque',
-        'start' => ['date_time' => '2026-10-20T10:00', 'time_zone' => 'Europe/Amsterdam'],
-        'end' => ['date_time' => '2026-10-20T10:30', 'time_zone' => 'Europe/Amsterdam'],
+        'start' => ['date_time' => '2026-10-20T08:00:00Z', 'time_zone' => 'Europe/Amsterdam'],
+        'end' => ['date_time' => '2026-10-20T08:30:00Z', 'time_zone' => 'Europe/Amsterdam'],
         'description' => 'Intro',
         'location' => 'Online',
         'url' => 'https://example.com/meet',
@@ -204,67 +204,34 @@ it('leaves out optional fields that are not set', function (): void {
         transparency: Transparency::Transparent,
     );
 
-    // After the change back to winter time (02:00Z = 03:00 local) the wall clock is unambiguous again.
     expect($event->toBody())->toBe([
         'title' => 'Demo',
         'transparency' => 'transparent',
-        'start' => ['date_time' => '2026-10-25T03:30', 'time_zone' => 'Europe/Amsterdam'],
-        'end' => ['date_time' => '2026-10-25T04:00', 'time_zone' => 'Europe/Amsterdam'],
+        'start' => ['date_time' => '2026-10-25T02:30:00Z', 'time_zone' => 'Europe/Amsterdam'],
+        'end' => ['date_time' => '2026-10-25T03:00:00Z', 'time_zone' => 'Europe/Amsterdam'],
     ]);
+});
+
+it('sends a time in the repeated hour of the autumn change as the instant it is', function (string $instant): void {
+    // 02:30 occurs twice in Amsterdam on 25 Oct 2026; an instant with Z names one of them.
+    $event = new NewEvent('Demo', CarbonImmutable::parse($instant), CarbonImmutable::parse('2026-10-25T03:00:00Z'), 'Europe/Amsterdam');
+
+    expect($event->toBody()['start'])->toBe(['date_time' => $instant, 'time_zone' => 'Europe/Amsterdam']);
+})->with([
+    'first 02:30' => '2026-10-25T00:30:00Z',
+    'second 02:30' => '2026-10-25T01:30:00Z',
+]);
+
+it('sends seconds as they are', function (): void {
+    $event = new NewEvent('Demo', CarbonImmutable::parse('2026-10-20T08:00:30Z'), CarbonImmutable::parse('2026-10-20T09:00:00Z'), 'UTC');
+
+    expect($event->toBody()['start'])->toBe(['date_time' => '2026-10-20T08:00:30Z', 'time_zone' => 'UTC']);
 });
 
 function eventBetween(string $start, string $end): NewEvent
 {
     return new NewEvent('Demo', CarbonImmutable::parse($start), CarbonImmutable::parse($end), 'Europe/Amsterdam');
 }
-
-it('sends times right around the DST changes', function (string $start, string $end, string $localStart, string $localEnd): void {
-    expect(eventBetween($start, $end)->toBody())->toMatchArray([
-        'start' => ['date_time' => $localStart, 'time_zone' => 'Europe/Amsterdam'],
-        'end' => ['date_time' => $localEnd, 'time_zone' => 'Europe/Amsterdam'],
-    ]);
-})->with([
-    'just before the autumn change' => ['2026-10-24T23:30:00Z', '2026-10-24T23:50:00Z', '2026-10-25T01:30', '2026-10-25T01:50'],
-    'first minute after the repeated hour' => ['2026-10-25T02:00:00Z', '2026-10-25T02:30:00Z', '2026-10-25T03:00', '2026-10-25T03:30'],
-    'before the spring change' => ['2026-03-29T00:30:00Z', '2026-03-29T01:00:00Z', '2026-03-29T01:30', '2026-03-29T03:00'],
-]);
-
-it('rejects a time in the repeated hour of the autumn change', function (string $instant): void {
-    $event = eventBetween($instant, '2026-10-26T12:00:00Z');
-
-    expect(fn (): array => $event->toBody())->toThrow(InvalidArgumentException::class, 'ambiguous in Europe/Amsterdam');
-})->with([
-    'first 02:30' => '2026-10-25T00:30:00Z',
-    'second 02:30' => '2026-10-25T01:30:00Z',
-    'first 02:00' => '2026-10-25T00:00:00Z',
-]);
-
-it('rejects an end in the repeated hour too', function (): void {
-    $event = eventBetween('2026-10-24T22:00:00Z', '2026-10-25T01:30:00Z');
-
-    expect(fn (): array => $event->toBody())->toThrow(InvalidArgumentException::class, 'ambiguous');
-});
-
-it('shifts a local time that does not exist in spring to one that does', function (): void {
-    // 02:30 on 29 Mar 2026 does not exist in Amsterdam; Carbon reads it as 03:30, which is fine to send.
-    $event = new NewEvent(
-        'Demo',
-        CarbonImmutable::parse('2026-03-29 02:30', 'Europe/Amsterdam'),
-        CarbonImmutable::parse('2026-03-29 04:30', 'Europe/Amsterdam'),
-        'Europe/Amsterdam',
-    );
-
-    expect($event->toBody()['start'])->toBe(['date_time' => '2026-03-29T03:30', 'time_zone' => 'Europe/Amsterdam']);
-});
-
-it('rejects times with seconds or microseconds', function (string $start): void {
-    $event = eventBetween($start, '2026-10-20T09:00:00Z');
-
-    expect(fn (): array => $event->toBody())->toThrow(InvalidArgumentException::class, 'has seconds');
-})->with([
-    'seconds' => '2026-10-20T08:00:30Z',
-    'microseconds' => '2026-10-20T08:00:00.5Z',
-]);
 
 it('rejects an event that ends before or when it starts', function (string $end): void {
     expect(fn (): NewEvent => eventBetween('2026-10-20T08:00:00Z', $end))

@@ -88,7 +88,7 @@ final class CirruxConnector extends Connector implements HasPagination
         } catch (RateLimitReachedException $exception) {
             throw new RateLimitedException($exception->getLimit()->getRemainingSeconds(), $exception);
         } catch (RequestException $exception) {
-            throw new CirruxRequestException($exception->getMessage(), $exception->getStatus(), $exception);
+            throw $this->requestException($exception);
         } catch (FatalRequestException $exception) {
             throw new CirruxRequestException($exception->getMessage(), 0, $exception);
         }
@@ -120,5 +120,26 @@ final class CirruxConnector extends Connector implements HasPagination
     protected function resolveRateLimitStore(): RateLimitStore
     {
         return $this->limitStore;
+    }
+
+    /**
+     * Cirrux answers a failure with `{"error": "<code>", "error_description": "<text>"}`
+     * (cirrux.co/help/api). With that body the message names the code and the description;
+     * without it, Saloon's message is kept.
+     */
+    private function requestException(RequestException $exception): CirruxRequestException
+    {
+        $status = $exception->getStatus();
+        $body = json_decode($exception->getResponse()->body(), true);
+        $error = is_array($body) && is_string($body['error'] ?? null) ? $body['error'] : null;
+
+        if ($error === null) {
+            return new CirruxRequestException($exception->getMessage(), $status, $exception);
+        }
+
+        $description = is_string($body['error_description'] ?? null) ? $body['error_description'] : null;
+        $message = sprintf('Cirrux answered %d %s', $status, $error).($description !== null ? ': '.$description : '.');
+
+        return new CirruxRequestException($message, $status, $exception, $error);
     }
 }

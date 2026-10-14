@@ -12,10 +12,8 @@ use InvalidArgumentException;
  */
 final readonly class NewEvent
 {
-    private const string WALL_CLOCK = 'Y-m-d\TH:i';
-
     /**
-     * @param  string  $timezone  the IANA zone the wall-clock times are sent in
+     * @param  string  $timezone  the IANA zone stored as the event's own time zone
      * @param  list<Attendee>  $attendees  Cirrux mails each of them an invitation
      */
     public function __construct(
@@ -33,20 +31,11 @@ final readonly class NewEvent
     }
 
     /**
-     * The request body as the Cirrux CLI sends it (cirrux-co/cli src/commands/calendar/events/event-body.ts):
-     * a bare `YYYY-MM-DDTHH:MM` wall-clock time plus `time_zone`, resolved by the server.
-     *
-     * Cirrux gets no offset, so the wall-clock time must name one instant. Fail closed
-     * instead of guessing: a start or end that has seconds, or that falls in the repeated
-     * hour of the autumn DST change, is rejected.
-     *
-     * Times coming back from Cirrux without an offset in that repeated hour follow Carbon's
-     * default (the first occurrence); the contract tests pin what Cirrux does there.
-     *
+     * The request body of "Create an event" (cirrux.co/help/api/calendar). Each bound is an absolute
+     * UTC instant plus `time_zone`: Cirrux reads an instant with `Z` as that instant and stores the
+     * zone as the event's own, so a time in the repeated hour of a DST change is no longer ambiguous.
      *
      * @return array<string, mixed>
-     *
-     * @throws InvalidArgumentException when a bound cannot be sent unambiguously
      */
     public function toBody(): array
     {
@@ -81,31 +70,8 @@ final readonly class NewEvent
      */
     private function bound(CarbonImmutable $instant): array
     {
-        if ($instant->second !== 0 || $instant->microsecond !== 0) {
-            throw new InvalidArgumentException(sprintf('Event times are sent per minute, but %s has seconds.', $instant->toIso8601ZuluString()));
-        }
-
-        $wallClock = $instant->setTimezone($this->timezone)->format(self::WALL_CLOCK);
-
-        // Read the wall-clock time with the UTC offsets of the day before and after: when
-        // both give a valid instant, the time occurs twice (autumn) and cannot be sent.
-        $instants = [];
-
-        foreach ([-1, 1] as $days) {
-            $offset = $instant->addDays($days)->setTimezone($this->timezone)->utcOffset();
-            $candidate = CarbonImmutable::parse($wallClock, 'UTC')->subMinutes($offset);
-
-            if ($candidate->setTimezone($this->timezone)->format(self::WALL_CLOCK) === $wallClock) {
-                $instants[$candidate->getTimestamp()] = true;
-            }
-        }
-
-        if (count($instants) > 1) {
-            throw new InvalidArgumentException(sprintf('%s is ambiguous in %s (%s occurs twice); pick a time outside the repeated hour.', $instant->toIso8601ZuluString(), $this->timezone, $wallClock));
-        }
-
         return [
-            'date_time' => $wallClock,
+            'date_time' => $instant->utc()->toIso8601ZuluString(),
             'time_zone' => $this->timezone,
         ];
     }

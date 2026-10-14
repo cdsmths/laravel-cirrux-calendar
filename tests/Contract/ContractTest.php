@@ -7,21 +7,22 @@ declare(strict_types=1);
  * with CIRRUX_TEST_CALENDAR (calendar uuid) and CIRRUX_REFRESH_TOKEN. Without them every test
  * is skipped. Every event a test creates is titled "[contract-test] ..." and deleted afterwards.
  *
- * Each test pins one assumption of the package about the undocumented API. When a test
- * fails, the assumption (or the package code built on it) is wrong:
+ * Each test pins one assumption of the package about the API, most of them documented in the
+ * Cirrux API reference (cirrux.co/help/api/calendar). When a test fails, the assumption (or the
+ * package code built on it) is wrong:
  *
  *  1. Window semantics: time_min/time_max match events that OVERLAP the window, not only
- *     events that start in it (the open question of plan.md, point 3).
- *  2. `timezone` parameter: it changes how bounds are rendered (`time_zone` field and wall
- *     clock), never the instant they denote.
+ *     events that start in it (documented; it was open point 3 of plan.md).
+ *  2. `timezone` parameter: it never changes the instant a bound denotes, and `time_zone`
+ *     stays the event's own zone.
  *  3. Series ids (the recurrence body being accepted is pinned apart, so a rejected body is not
  *     mistaken for a wrong id scheme): an expanded occurrence has the id `<series-uuid>_<recurrence-id>` and its
  *     `series_uuid` holds the uuid of the series. The recurrence is sent as an RRULE string
  *     (a guess from the CLI's `--recurrence`).
  *  4. The create response is a bare event, with the fields CalendarEvent::fromApi reads.
  *  5. Deleting is idempotent in effect: the second delete answers 404.
- *  6. Autumn DST change: events just before and after the change come back as the instants
- *     that were sent, after UTC normalisation.
+ *  6. Autumn DST change: events just before, inside and after the repeated hour come back as
+ *     the instants that were sent, after UTC normalisation (NewEvent sends UTC instants).
  *  7. `transparent` is returned as `transparent`.
  *  8. Pagination: a small `limit` gives `has_more` and `next_cursor`, and the paginator
  *     follows them until every event is fetched, without duplicates.
@@ -57,7 +58,7 @@ it('matches events that overlap time_min/time_max, not only events that start in
         ->not->toContain($earlier->id);
 });
 
-it('keeps the instant and only changes the rendering when the timezone parameter changes', function (): void {
+it('keeps the instant and the event time zone when the timezone parameter changes', function (): void {
     $created = ContractSession::create(ContractSession::event('timezone parameter', ContractSession::at(1, 12)));
 
     foreach (['UTC', 'Europe/Amsterdam', 'America/New_York'] as $zone) {
@@ -70,8 +71,8 @@ it('keeps the instant and only changes the rendering when the timezone parameter
 
         $event = CalendarEvent::fromApi($item ?? []);
 
-        expect(data_get($item, 'start.time_zone'))->toBe($zone)
-            ->and(data_get($item, 'end.time_zone'))->toBe($zone)
+        expect(data_get($item, 'start.time_zone'))->toBe(ContractSession::ZONE)
+            ->and(data_get($item, 'end.time_zone'))->toBe(ContractSession::ZONE)
             ->and($event->start->toIso8601ZuluString())->toBe($created->start->toIso8601ZuluString())
             ->and($event->end->toIso8601ZuluString())->toBe($created->end->toIso8601ZuluString());
     }
@@ -167,10 +168,13 @@ it('answers 404 when an event that was already deleted is deleted again', functi
     expect($status)->toBe(404);
 });
 
-it('returns the sent instants for events just before and after the autumn DST change', function (): void {
+it('returns the sent instants for events around and inside the repeated hour of the autumn DST change', function (): void {
     $change = ContractSession::nextAutumnChange();
     $sent = [
         'before the change' => $change->setTime(1, 0),
+        // Real minutes after local midnight: the first 02:30 (summer time) and the second (winter time).
+        'first 02:30' => $change->addMinutes(150),
+        'second 02:30' => $change->addMinutes(210),
         'after the change' => $change->setTime(3, 0),
     ];
 
