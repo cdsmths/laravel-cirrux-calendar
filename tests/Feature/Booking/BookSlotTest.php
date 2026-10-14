@@ -129,6 +129,61 @@ it('gives the event the title of this booking, trimmed', function (): void {
     Event::assertDispatched(BookingCreating::class, fn (BookingCreating $event): bool => $event->title === 'Demo Campmaster / La Brouquère');
 });
 
+it('puts the url and location of the event type on the event', function (): void {
+    config()->set('cirrux.event_types.demo.url', 'https://meet.example.com/demo');
+    config()->set('cirrux.event_types.demo.location', 'Online');
+    Saloon::fake([
+        ListEvents::class => bookSlotList(),
+        CreateEventRequest::class => MockResponse::make(bookSlotPayload('evt-1', BOOK_SLOT_START, '2026-10-30T08:30:00Z'), 201),
+    ]);
+
+    Cirrux::book('demo', bookSlotStart(), bookSlotAttendee());
+
+    Saloon::assertSent(fn (CreateEventRequest $request): bool => $request->body()->get('url') === 'https://meet.example.com/demo'
+        && $request->body()->get('location') === 'Online');
+    Event::assertDispatched(BookingCreating::class, fn (BookingCreating $event): bool => $event->url === 'https://meet.example.com/demo'
+        && $event->location === 'Online');
+});
+
+it('lets a booking pass its own url and location, trimmed, and falls back on empty ones', function (?string $url, ?string $location, ?string $expectedUrl, ?string $expectedLocation): void {
+    config()->set('cirrux.event_types.demo.url', 'https://meet.example.com/demo');
+    config()->set('cirrux.event_types.demo.location', 'Online');
+    Saloon::fake([
+        ListEvents::class => bookSlotList(),
+        CreateEventRequest::class => MockResponse::make(bookSlotPayload('evt-1', BOOK_SLOT_START, '2026-10-30T08:30:00Z'), 201),
+    ]);
+
+    Cirrux::book('demo', bookSlotStart(), bookSlotAttendee(), url: $url, location: $location);
+
+    Saloon::assertSent(fn (CreateEventRequest $request): bool => $request->body()->get('url') === $expectedUrl
+        && $request->body()->get('location') === $expectedLocation);
+})->with([
+    'own values' => [' https://zoom.example.com/j/123 ', ' Zoom ', 'https://zoom.example.com/j/123', 'Zoom'],
+    'empty values' => ['', '   ', 'https://meet.example.com/demo', 'Online'],
+    'null values' => [null, null, 'https://meet.example.com/demo', 'Online'],
+]);
+
+it('sends no url or location when neither the event type nor the booking has one', function (): void {
+    Saloon::fake([
+        ListEvents::class => bookSlotList(),
+        CreateEventRequest::class => MockResponse::make(bookSlotPayload('evt-1', BOOK_SLOT_START, '2026-10-30T08:30:00Z'), 201),
+    ]);
+
+    Cirrux::book('demo', bookSlotStart(), bookSlotAttendee());
+
+    Saloon::assertSent(fn (CreateEventRequest $request): bool => ! array_key_exists('url', $request->body()->all()) && ! array_key_exists('location', $request->body()->all()));
+});
+
+it('refuses a url that is not http or https before calling Cirrux', function (): void {
+    Saloon::fake([]);
+
+    expect(fn (): Booking => Cirrux::book('demo', bookSlotStart(), bookSlotAttendee(), url: 'javascript:alert(1)'))
+        ->toThrow(InvalidArgumentException::class, 'http or https');
+
+    Saloon::assertNothingSent();
+    Event::assertNotDispatched(BookingRejected::class);
+});
+
 it('falls back to the title of the event type without a usable title', function (?string $title): void {
     Saloon::fake([
         ListEvents::class => bookSlotList(),

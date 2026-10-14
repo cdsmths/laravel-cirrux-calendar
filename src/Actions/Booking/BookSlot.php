@@ -34,6 +34,7 @@ use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\Facades\Config;
+use InvalidArgumentException;
 use Throwable;
 
 final readonly class BookSlot
@@ -65,23 +66,35 @@ final readonly class BookSlot
      * When Cirrux creates the event but the answer does not reach us (a timeout), no booking row
      * exists while the event does: the next refresh shows that time as busy.
      *
-     * Every refusal dispatches `BookingRejected`, after the lock is released. `BookingCreated` is
+     * Every refusal of the slot (invalid start, busy, lock timeout, veto) dispatches `BookingRejected`,
+     * after the lock is released; a wrong argument such as an invalid `$url` throws without it. `BookingCreated` is
      * dispatched last, and only when the row is stored.
      *
      * @param  string|null  $title  the title of this event in the calendar; null, empty or only
      *                              whitespace falls back to the title of the event type
+     * @param  string|null  $url  a link on the event, for example a video call; null, empty or only
+     *                            whitespace falls back to the `url` of the event type
+     * @param  string|null  $location  likewise, falling back to the `location` of the event type
      *
      * @throws InvalidConfigurationException for an unknown or invalid event type, or one without a calendar
+     * @throws InvalidArgumentException when `$url` is not an http or https URL
      * @throws InvalidSlotException when the start is not a valid slot start of the event type
      * @throws SlotUnavailableException when the calendar is busy at that time, or could not be locked in time
      * @throws BookingVetoedException when a listener of BookingCreating holds the booking back
      * @throws CirruxRequestException when Cirrux refuses or cannot be reached
      * @throws RateLimitedException when the rate limit is reached
      */
-    public function handle(string $eventType, CarbonInterface $start, Attendee $attendee, ?string $notes = null, ?string $title = null): Booking
+    public function handle(string $eventType, CarbonInterface $start, Attendee $attendee, ?string $notes = null, ?string $title = null, ?string $url = null, ?string $location = null): Booking
     {
         $type = $this->eventType($eventType);
         $title = $this->title($type, $title);
+        $url = $this->filled($url) ?? $type->url;
+        $location = $this->filled($location) ?? $type->location;
+
+        if ($url !== null && ! EventType::isHttpUrl($url)) {
+            throw new InvalidArgumentException(sprintf('The url of a booking must be an http or https URL, "%s" is not.', $url));
+        }
+
         $calendar = (string) $type->calendar;
         $start = CarbonImmutable::instance($start)->utc();
 
@@ -99,8 +112,8 @@ final readonly class BookSlot
             /** @var Booking $booking */
             $booking = $this->locks
                 ->lock('cirrux:lock:'.$calendar, self::LOCK_SECONDS)
-                ->block(Config::integer('cirrux.lock.timeout'), function () use ($type, $calendar, $start, $attendee, $notes, $title, &$refresh): Booking {
-                    return $this->book($type, $calendar, $start, $attendee, $notes, $title, $refresh);
+                ->block(Config::integer('cirrux.lock.timeout'), function () use ($type, $calendar, $start, $attendee, $notes, $title, $url, $location, &$refresh): Booking {
+                    return $this->book($type, $calendar, $start, $attendee, $notes, $title, $url, $location, $refresh);
                 });
         } catch (LockTimeoutException) {
             event(new BookingRejected($eventType, $start, $attendee, SlotUnavailableException::LOCK_TIMEOUT));
@@ -128,7 +141,7 @@ final readonly class BookSlot
     /**
      * Everything that must happen with the calendar locked.
      */
-    private function book(EventType $type, string $calendar, CarbonImmutable $start, Attendee $attendee, ?string $notes, string $title, bool &$refresh): Booking
+    private function book(EventType $type, string $calendar, CarbonImmutable $start, Attendee $attendee, ?string $notes, string $title, ?string $url, ?string $location, bool &$refresh): Booking
     {
         $end = $start->addMinutes($type->duration);
 
@@ -137,7 +150,7 @@ final readonly class BookSlot
 
         throw_unless($this->calculator->isFree($type, $start, $events, CarbonImmutable::now('UTC')), SlotUnavailableException::busy());
 
-        event(new BookingCreating($type->name, new Slot($start, $end), $attendee, $notes, $title));
+        event(new BookingCreating($type->name, new Slot($start, $end), $attendee, $notes, $title, $url, $location));
 
         $created = $this->createEvent->handle($calendar, new NewEvent(
             title: $title,
@@ -145,6 +158,8 @@ final readonly class BookSlot
             end: $end,
             timezone: $type->timezone,
             description: $notes,
+            location: $location,
+            url: $url,
             transparency: Transparency::Opaque,
             attendees: [$attendee],
         ));
@@ -208,9 +223,17 @@ final readonly class BookSlot
      */
     private function title(EventType $type, ?string $title): string
     {
-        $title = trim($title ?? '');
+        return $this->filled($title) ?? $type->title;
+    }
 
-        return $title === '' ? $type->title : $title;
+    /**
+     * The value trimmed, or null when it is null, empty or only whitespace.
+     */
+    private function filled(?string $value): ?string
+    {
+        $value = trim($value ?? '');
+
+        return $value === '' ? null : $value;
     }
 
     /**

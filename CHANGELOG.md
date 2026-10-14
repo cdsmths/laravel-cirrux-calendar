@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 While the Cirrux calendar endpoints are undocumented, releases stay on 0.x and a minor release may contain breaking changes.
 
+## [0.1.4] - 2026-10-14
+
+### Added
+
+- A video call link and a location for bookings. An event type takes optional `url` (http or https; `CIRRUX_DEMO_URL` for `demo`) and `location`, and `Cirrux::book()` takes optional `url:` and `location:` that override them. Both are trimmed; null, empty or only whitespace falls back to the event type. Cirrux puts them in the invitation. A `url` that is not http or https throws an `InvalidArgumentException` before anything is sent.
+- `EventType::isHttpUrl()`.
+
+### Changed
+
+- `BookingCreating` carries `url` and `location`, as optional last constructor arguments.
+
+## [0.1.3] - 2026-10-14
+
+### Changed
+
+- A generic example title in the docs, and an Open Graph image in `art/`.
+
 ## [0.1.2] - 2026-10-14
 
 ### Added

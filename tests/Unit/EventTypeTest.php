@@ -45,8 +45,31 @@ it('reads the default demo event type of the package config', function (): void 
         ->and($type->hours)->toBe([
             'mon' => [['09:00', '12:00'], ['13:00', '17:00']],
             'fri' => [['09:00', '12:00'], ['13:00', '17:00']],
-        ]);
+        ])
+        ->and($type->url)->toBeNull()
+        ->and($type->location)->toBeNull();
 });
+
+it('reads a meeting url and location, trimmed, and treats empty ones as not set', function (): void {
+    $type = EventType::fromConfig('demo', array_merge(eventTypeConfig(), ['url' => ' https://meet.example.com/demo ', 'location' => ' Online ']));
+    $empty = EventType::fromConfig('demo', array_merge(eventTypeConfig(), ['url' => '', 'location' => '  ']));
+
+    expect($type->url)->toBe('https://meet.example.com/demo')
+        ->and($type->location)->toBe('Online')
+        ->and($empty->url)->toBeNull()
+        ->and($empty->location)->toBeNull();
+});
+
+it('tells http and https urls apart from the rest', function (string $value, bool $expected): void {
+    expect(EventType::isHttpUrl($value))->toBe($expected);
+})->with([
+    'https' => ['https://meet.example.com/demo', true],
+    'http, upper case' => ['HTTP://meet.example.com', true],
+    'mailto' => ['mailto:jan@example.com', false],
+    'javascript' => ['javascript:alert(1)', false],
+    'no scheme' => ['meet.example.com/demo', false],
+    'not a url' => ['a video call', false],
+]);
 
 it('accepts the edges of every range', function (): void {
     $type = EventType::fromConfig('edge', array_merge(eventTypeConfig(), [
@@ -77,6 +100,9 @@ it('names the key of every invalid value', function (string $suffix, string $fie
         ->toThrow(InvalidConfigurationException::class, '"cirrux.event_types.demo.'.$suffix.'"');
 })->with([
     'calendar is no string' => ['calendar', 'calendar', 5],
+    'url is no string' => ['url', 'url', 5],
+    'url is no http url' => ['url', 'url', 'ftp://example.com/demo'],
+    'location is no string' => ['location', 'location', ['Online']],
     'title is empty' => ['title', 'title', ''],
     'title is no string' => ['title', 'title', 12],
     'title is null' => ['title', 'title', null],

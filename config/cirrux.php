@@ -26,6 +26,9 @@ return [
         'demo' => [
             'calendar' => env('CIRRUX_DEMO_CALENDAR'),
             'title' => 'Demo',
+            // Op elk event van een boeking; een boeking kan eigen waarden meegeven.
+            'url' => env('CIRRUX_DEMO_URL'),     // bijv. de link van een vaste videokamer
+            'location' => null,
             'duration' => 30,                 // minuten
             'buffer_before' => 10,            // rond alle opaque events
             'buffer_after' => 10,

@@ -11,7 +11,9 @@ use DateTimeZone;
  * One entry of `cirrux.event_types`: what can be booked and when.
  *
  * Durations are in minutes, `maxDaysAhead` in days. `hours` holds wall-clock periods
- * in `timezone`; a day without a key cannot be booked.
+ * in `timezone`; a day without a key cannot be booked. `url` (an http or https link, for
+ * example a video call) and `location` are put on every event a booking creates, unless
+ * the booking passes its own.
  */
 final readonly class EventType
 {
@@ -32,6 +34,8 @@ final readonly class EventType
         public int $maxDaysAhead,
         public string $timezone,
         public array $hours,
+        public ?string $url = null,
+        public ?string $location = null,
     ) {}
 
     /**
@@ -76,7 +80,44 @@ final readonly class EventType
             maxDaysAhead: self::integerAtLeast($config, $key, 'max_days_ahead', 1),
             timezone: $timezone,
             hours: self::hours($key.'.hours', $config['hours'] ?? null),
+            url: self::url($key.'.url', $config['url'] ?? null),
+            location: self::optionalString($key.'.location', $config['location'] ?? null),
         );
+    }
+
+    /**
+     * Whether the value is an absolute http or https URL.
+     */
+    public static function isHttpUrl(string $value): bool
+    {
+        $scheme = parse_url($value, PHP_URL_SCHEME);
+
+        return filter_var($value, FILTER_VALIDATE_URL) !== false && in_array(is_string($scheme) ? mb_strtolower($scheme) : null, ['http', 'https'], true);
+    }
+
+    /**
+     * An empty string counts as not set, so an empty env variable does no harm.
+     */
+    private static function optionalString(string $key, mixed $value): ?string
+    {
+        if ($value !== null && ! is_string($value)) {
+            throw InvalidConfigurationException::forKey($key, 'must be a string or null');
+        }
+
+        $value = trim((string) $value);
+
+        return $value === '' ? null : $value;
+    }
+
+    private static function url(string $key, mixed $value): ?string
+    {
+        $url = self::optionalString($key, $value);
+
+        if ($url !== null && ! self::isHttpUrl($url)) {
+            throw InvalidConfigurationException::forKey($key, 'must be an http or https URL or null');
+        }
+
+        return $url;
     }
 
     /**

@@ -28,6 +28,7 @@ use Codesmiths\CirruxCalendar\Exceptions\InvalidSlotException;
 use Codesmiths\CirruxCalendar\Exceptions\SlotUnavailableException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\Collection;
+use InvalidArgumentException;
 
 /**
  * Entry point behind the Cirrux facade.
@@ -95,17 +96,19 @@ final readonly class Cirrux
      * Books one slot of a configured event type: the start is validated, the calendar is checked
      * against Cirrux itself, the event is created (Cirrux mails the attendee) and the booking is stored.
      *
-     * `$title` names this event in the calendar; null, empty or only whitespace uses the title of the event type.
+     * `$title` names this event in the calendar, `$url` links it (a video call, say) and `$location` places it.
+     * Null, empty or only whitespace uses the value of the event type.
      *
      * @throws InvalidConfigurationException for an unknown event type, an invalid one or one without a calendar
+     * @throws InvalidArgumentException when `$url` is not an http or https URL
      * @throws InvalidSlotException when the start is not a valid slot start of the event type
      * @throws SlotUnavailableException when the calendar is busy at that time, or could not be locked in time
      * @throws BookingVetoedException when a listener of BookingCreating holds the booking back
      * @throws CirruxException when Cirrux refuses or cannot be reached
      */
-    public function book(string $eventType, CarbonInterface $start, Attendee $attendee, ?string $notes = null, ?string $title = null): Booking
+    public function book(string $eventType, CarbonInterface $start, Attendee $attendee, ?string $notes = null, ?string $title = null, ?string $url = null, ?string $location = null): Booking
     {
-        return $this->bookSlot->handle($eventType, $start, $attendee, $notes, $title);
+        return $this->bookSlot->handle($eventType, $start, $attendee, $notes, $title, $url, $location);
     }
 
     /**

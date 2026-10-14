@@ -10,7 +10,7 @@ use Illuminate\Foundation\Events\Dispatchable;
 
 /**
  * The slot is valid and free, and nothing has been written yet. A listener holds the booking
- * back by throwing a BookingVetoedException. `$title` is the title the event will get in the calendar.
+ * back by throwing a BookingVetoedException. `$title`, `$url` and `$location` are what the event will get in the calendar.
  */
 final readonly class BookingCreating
 {
@@ -22,5 +22,7 @@ final readonly class BookingCreating
         public Attendee $attendee,
         public ?string $notes,
         public string $title,
+        public ?string $url = null,
+        public ?string $location = null,
     ) {}
 }
