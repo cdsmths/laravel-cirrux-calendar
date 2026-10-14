@@ -1,5 +1,7 @@
 # Laravel Cirrux Calendar
 
+![Laravel Cirrux Calendar](art/og-image.png)
+
 A Laravel package for the calendar API of [Cirrux](https://cirrux.co): log in, read your calendars and create or delete events. Cached availability and booking are in, so people outside your company can book a demo straight into a Cirrux calendar.
 
 The package only gives you methods. It ships no routes and no UI: the booking page, forms and emails belong to your app.
