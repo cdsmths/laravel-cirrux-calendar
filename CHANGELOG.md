@@ -10,7 +10,7 @@ While the Cirrux calendar endpoints are undocumented, releases stay on 0.x and a
 
 ### Added
 
-- An optional `title` for a single booking: `Cirrux::book('demo', $start, $attendee, $notes, title: 'Demo Campmaster / La Brouquère')`. Null, an empty string or only whitespace falls back to the `title` of the event type; the title is trimmed.
+- An optional `title` for a single booking: `Cirrux::book('demo', $start, $attendee, $notes, title: 'Demo for Acme Inc.')`. Null, an empty string or only whitespace falls back to the `title` of the event type; the title is trimmed.
 
 ### Changed
 

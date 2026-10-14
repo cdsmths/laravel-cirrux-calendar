@@ -198,7 +198,7 @@ $booking = Cirrux::book(
     CarbonImmutable::parse('2026-11-02 09:00', 'Europe/Amsterdam'),
     new Attendee('jane@example.com', 'Jane'),
     'Interested in the API', // optional notes, stored as the description of the event
-    title: 'Demo Campmaster / La Brouquère', // optional; null, empty or whitespace uses the title of the event type
+    title: 'Demo for Acme Inc.', // optional; null, empty or whitespace uses the title of the event type
 ); // Booking
 
 Cirrux::cancel($booking);      // or Cirrux::cancel($booking->id)
